@@ -63,12 +63,16 @@ async function fetchGenres() {
 }
 fetchGenres();
 
+const FAVICON_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><circle cx="50" cy="50" r="50" fill="#8b0000"/><path d="M25 70l15-25 15 15 20-30" fill="none" stroke="white" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/><path d="M55 30h20v20" fill="none" stroke="white" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const FAVICON_URL = `${ADDON_URL}/favicon.svg`;
+
 const manifest = {
     id: "com.trending.custom",
-    version: "1.12.2",
+    version: "2.0.0",
     name: "TMDB Top Today",
     description: "Customizable Stremio catalogs for top trending TMDB content with optional graphic tags and ranked posters.",
-    behaviorHints: { configurable: true, configurationRequired: true },
+    logo: FAVICON_URL,
+    behaviorHints: { configurable: true, configurationRequired: true, configurationURL: `${ADDON_URL}/configure` },
     resources: ["catalog"],
     types: ["movie", "series"],
     idPrefixes: ["tmdb:"],
@@ -612,14 +616,15 @@ builder.defineCatalogHandler(async (args) => {
     const config = extra?.config || {};
 
     const userConfig = {
-        landscapeTags: config.landscapeTags !== undefined ? config.landscapeTags !== "false" : config.tags !== "false",
-        landscapeLogos: config.landscapeLogos !== undefined ? config.landscapeLogos === "true" : config.logos === "true",
-        landscapeRanked: config.landscapeRanked === "true",
-        landscapePosterLang: config.landscapePosterLang || config.posterLang || "en",
-        portraitTags: config.portraitTags !== undefined ? config.portraitTags !== "false" : config.tags !== "false",
-        portraitLogos: config.portraitLogos !== undefined ? config.portraitLogos === "true" : config.logos === "true",
-        portraitRanked: config.portraitRanked !== undefined ? config.portraitRanked !== "false" : config.ranked !== "false",
-        portraitPosterLang: config.portraitPosterLang || config.posterLang || "en",
+        backdropTags: config.backdropTags !== undefined ? config.backdropTags !== "false" : config.landscapeTags !== undefined ? config.landscapeTags !== "false" : config.tags !== "false",
+        backdropLogos: config.backdropLogos !== undefined ? config.backdropLogos === "true" : config.landscapeLogos !== undefined ? config.landscapeLogos === "true" : config.logos === "true",
+        backdropRanked: config.backdropRanked !== undefined ? config.backdropRanked === "true" : config.landscapeRanked === "true",
+        backdropLanguage: config.backdropLanguage || config.landscapePosterLang || config.posterLang || "en",
+        posterTags: config.posterTags !== undefined ? config.posterTags !== "false" : config.portraitTags !== undefined ? config.portraitTags !== "false" : config.tags !== "false",
+        posterLogos: config.posterLogos !== undefined ? config.posterLogos === "true" : config.portraitLogos !== undefined ? config.portraitLogos === "true" : config.logos === "true",
+        posterRanked: config.posterRanked !== undefined ? config.posterRanked !== "false" : config.portraitRanked !== undefined ? config.portraitRanked !== "false" : config.ranked !== "false",
+        posterLanguage: config.posterLanguage || config.portraitPosterLang || config.posterLang || "en",
+        posterShape: config.posterShape === "landscape" ? "landscape" : "portrait",
         digitalOnly: config.digitalOnly !== "false",
         listLang: config.listLang || "en"
     };
@@ -653,7 +658,7 @@ builder.defineCatalogHandler(async (args) => {
         if (pageItems.length > 0) {
             const detailsData = await Promise.all(pageItems.map(async (item) => {
                 try {
-                    return await fetchTmdbJson(`https://api.themoviedb.org/3/${tmdbType}/${item.id}?api_key=${TMDB_API_KEY}&append_to_response=external_ids,images`);
+                    return await fetchTmdbJson(`https://api.themoviedb.org/3/${tmdbType}/${item.id}?api_key=${TMDB_API_KEY}&append_to_response=external_ids,images&include_image_language=${item.original_language},en,null`);
                 } catch { return null; }
             }));
             pageItems.forEach((item, index) => item._details = detailsData[index]);
@@ -712,7 +717,7 @@ builder.defineCatalogHandler(async (args) => {
             }
 
             pageItems.forEach(item => {
-                const needsTags = userConfig.landscapeTags || userConfig.portraitTags;
+                const needsTags = userConfig.backdropTags || userConfig.posterTags;
                 if (needsTags) {
                     const daysSincePhysical = (item._earliestPhysical && item._earliestPhysical <= TODAY) ? diffDays(TODAY, item._earliestPhysical) : null;
                     const daysSinceDigital = (item._earliestDigital && item._earliestDigital <= TODAY) ? diffDays(TODAY, item._earliestDigital) : null;
@@ -743,11 +748,11 @@ builder.defineCatalogHandler(async (args) => {
             });
 
         } else if (type === 'series' && pageItems.length > 0) {
-            const needsTags = userConfig.landscapeTags || userConfig.portraitTags;
+            const needsTags = userConfig.backdropTags || userConfig.posterTags;
             if (needsTags) {
                 const tvDetailsData = await Promise.all(pageItems.map(async (show) => {
                     try {
-                        const data = await fetchTmdbJson(`https://api.themoviedb.org/3/tv/${show.id}?api_key=${TMDB_API_KEY}&append_to_response=external_ids,images`);
+                        const data = await fetchTmdbJson(`https://api.themoviedb.org/3/tv/${show.id}?api_key=${TMDB_API_KEY}&append_to_response=external_ids,images&include_image_language=${show.original_language},en,null`);
 
                         let nextEp = data.next_episode_to_air;
                         if (nextEp && nextEp.air_date) {
@@ -876,16 +881,17 @@ builder.defineCatalogHandler(async (args) => {
         let finalPosterUrl = item.poster_path ? `https://image.tmdb.org/t/p/w500${item.poster_path}` : null;
         const imdbId = item._details?.imdb_id || item._details?.external_ids?.imdb_id;
         const logos = item._details?.images?.logos || [];
-        const logoLanguage = userConfig.portraitPosterLang === 'null' ? null : userConfig.portraitPosterLang;
+        const logoLanguage = userConfig.posterLanguage === 'null' ? null : userConfig.posterLanguage;
         const titleLogo = logos.find(logo => logo.iso_639_1 === logoLanguage)
             || logos.find(logo => logo.iso_639_1 === item.original_language)
             || logos.find(logo => logo.iso_639_1 === 'en')
             || logos[0];
 
-        const pTag = userConfig.portraitTags ? (item._tag || 'none') : 'none';
-        if (userConfig.portraitRanked || userConfig.portraitTags || userConfig.portraitLogos || userConfig.portraitPosterLang !== 'en') {
-            finalPosterUrl = `${ADDON_URL}/poster/${item.id}.png?type=${type}&tag=${pTag}&rank=${userConfig.portraitRanked ? rank : 'none'}&lang=${userConfig.portraitPosterLang}&logos=${userConfig.portraitLogos ? '1' : '0'}`;
+        const pTag = userConfig.posterTags ? (item._tag || 'none') : 'none';
+        if (userConfig.posterRanked || userConfig.posterTags || userConfig.posterLogos || userConfig.posterLanguage !== 'en') {
+            finalPosterUrl = `${ADDON_URL}/poster/${item.id}.png?type=${type}&tag=${pTag}&rank=${userConfig.posterRanked ? rank : 'none'}&lang=${userConfig.posterLanguage}&logos=${userConfig.posterLogos ? '1' : '0'}`;
         }
+        const landscapePosterUrl = `${ADDON_URL}/backdrop/${item.id}.png?type=${type}&tag=${pTag}&rank=${userConfig.posterRanked ? rank : 'none'}&lang=${userConfig.posterLanguage}&logos=${userConfig.posterLogos ? '1' : '0'}`;
 
         let itemGenres = item.genre_ids ? item.genre_ids.map(gId => genreMap[gId]).filter(Boolean) : [];
         if (userConfig.listLang === 'non-en' && item.original_language) {
@@ -897,18 +903,24 @@ builder.defineCatalogHandler(async (args) => {
             }
         }
 
-        const lTag = userConfig.landscapeTags ? (item._tag || 'none') : 'none';
+        const lTag = userConfig.backdropTags ? (item._tag || 'none') : 'none';
+        const finalBackground = `${ADDON_URL}/backdrop/${item.id}.png?type=${type}&tag=${lTag}&rank=${userConfig.backdropRanked ? rank : 'none'}&lang=${userConfig.backdropLanguage}&logos=${userConfig.backdropLogos ? '1' : '0'}`;
+        const textlessBackdrop = item._details?.images?.backdrops?.find(backdrop => backdrop.iso_639_1 === null);
+        const background = userConfig.posterShape === 'landscape'
+            ? (textlessBackdrop?.file_path ? `https://image.tmdb.org/t/p/original${textlessBackdrop.file_path}` : null)
+            : finalBackground;
 
         return {
             id: imdbId || `tmdb:${item.id}`,
             _tmdbId: item.id,
             name: item.title || item.name,
             type: type,
+            posterShape: userConfig.posterShape === 'landscape' ? 'landscape' : 'poster',
             genres: itemGenres,
             description: item.overview || "",
             ...(titleLogo?.file_path ? { logo: `https://image.tmdb.org/t/p/original${titleLogo.file_path}` } : {}),
-            background: `${ADDON_URL}/backdrop/${item.id}.png?type=${type}&tag=${lTag}&rank=${userConfig.landscapeRanked ? rank : 'none'}&lang=${userConfig.landscapePosterLang}&logos=${userConfig.landscapeLogos ? '1' : '0'}`,
-            poster: finalPosterUrl
+            background,
+            poster: userConfig.posterShape === 'portrait' ? finalPosterUrl : landscapePosterUrl
         };
     });
 
@@ -1118,7 +1130,7 @@ app.get('/backdrop/:id.png', async (req, res) => {
 
 // ─── Universal image route ────────────────────────────────────────────────────
 
-app.get('/image/:type/:id.png', async (req, res) => {
+async function redirectAiomImage(req, res, targetRoute) {
     const { type, id } = req.params;
     const { tag, lang, logos } = req.query;
 
@@ -1144,8 +1156,16 @@ app.get('/image/:type/:id.png', async (req, res) => {
         }
     }
     const query = new URLSearchParams({ type, tag: finalTag, rank, lang: lang || 'en', logos: logos || '0' });
-    const newUrl = `/poster/${id}.png?${query.toString()}`;
+    const newUrl = `/${targetRoute}/${id}.png?${query.toString()}`;
     return res.redirect(302, newUrl); // Use 302 Found, as the tag can change
+}
+
+app.get('/image/:type/:id.png', async (req, res) => {
+    return redirectAiomImage(req, res, 'poster');
+});
+
+app.get('/landscape/:type/:id.png', async (req, res) => {
+    return redirectAiomImage(req, res, 'backdrop');
 });
 
 // ─── Poster route ─────────────────────────────────────────────────────────────
@@ -1297,7 +1317,7 @@ const configUI = `<!DOCTYPE html>
 <head>
     <title>TMDB Top Today</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><circle cx=%2250%22 cy=%2250%22 r=%2250%22 fill=%22%238b0000%22/><path d=%22M25 70 l15 -25 l15 15 l20 -30%22 fill=%22none%22 stroke=%22white%22 stroke-width=%228%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22/><path d=%22M55 30 h20 v20%22 fill=%22none%22 stroke=%22white%22 stroke-width=%228%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22/></svg>">
+    <link rel="icon" href="${FAVICON_URL}" type="image/svg+xml">
     <style>
         body { font-family: 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #121212; color: #fff; margin: 0; padding: 20px; box-sizing: border-box; height: 100vh; overflow: hidden; }
         .wrapper { display: flex; flex-direction: row; gap: 30px; width: 100%; height: 100%; max-width: none; align-items: stretch; }
@@ -1378,36 +1398,40 @@ const configUI = `<!DOCTYPE html>
                         <label><input type="checkbox" value="hi" onchange="handleLangChange(this)"> Hindi</label>
                     </div>
                 </div>
+                <label for="posterShape">Poster Style</label>
+                <select id="posterShape" onchange="updateLink()" style="margin-bottom: 15px;">
+                    <option value="portrait" selected>Portrait</option>
+                    <option value="landscape">Landscape</option>
+                </select>
                 <label class="checkbox-group" for="digitalOnly"><input type="checkbox" id="digitalOnly" checked onchange="updateLink()"><span>Filter Movies Not Released Digitally</span></label>
             </div>
             
             <div class="form-group">
-                <h3 style="color: #e0e0e0; margin: 0 0 15px 0; font-size: 16px; border-bottom: 1px solid #333; padding-bottom: 8px;">Poster Config</h3>
+                <h3 style="color: #e0e0e0; margin: 0 0 15px 0; font-size: 16px; border-bottom: 1px solid #333; padding-bottom: 8px;">Art Config</h3>
                 <div style="display: flex; justify-content: space-between; margin-bottom: 10px; color: #b3b3b3; font-weight: 600; font-size: 14px; padding: 0 10px;">
                     <span style="flex: 1.5;">Config</span>
-                    <span style="flex: 1; text-align: center;">Landscape</span>
-                    <span style="flex: 1; text-align: center;">Portrait</span>
+                    <span style="flex: 1; text-align: center;">Poster</span>
+                    <span style="flex: 1; text-align: center;">Backdrop</span>
                 </div>
                 <div style="display: flex; justify-content: space-between; align-items: center; background: #2a2a2a; padding: 12px; border-radius: 6px; border: 1px solid #333; margin-bottom: 10px;">
                     <span style="flex: 1.5; color: #fff; font-size: 15px;">Tags</span>
-                    <div style="flex: 1; text-align: center;"><input type="checkbox" id="landscapeTags" checked onchange="updateLink()" style="width: 18px; height: 18px; accent-color: #8b0000; cursor: pointer;"></div>
-                    <div style="flex: 1; text-align: center;"><input type="checkbox" id="portraitTags" checked onchange="updateLink()" style="width: 18px; height: 18px; accent-color: #8b0000; cursor: pointer;"></div>
+                    <div style="flex: 1; text-align: center;"><input type="checkbox" id="posterTags" checked onchange="updateLink()" style="width: 18px; height: 18px; accent-color: #8b0000; cursor: pointer;"></div>
+                    <div style="flex: 1; text-align: center;"><input type="checkbox" id="backdropTags" checked onchange="updateLink()" style="width: 18px; height: 18px; accent-color: #8b0000; cursor: pointer;"></div>
                 </div>
                 <div style="display: flex; justify-content: space-between; align-items: center; background: #2a2a2a; padding: 12px; border-radius: 6px; border: 1px solid #333; margin-bottom: 10px;">
                     <span style="flex: 1.5; color: #fff; font-size: 15px;">Streaming Logos</span>
-                    <div style="flex: 1; text-align: center;"><input type="checkbox" id="landscapeLogos" onchange="updateLink()" style="width: 18px; height: 18px; accent-color: #8b0000; cursor: pointer;"></div>
-                    <div style="flex: 1; text-align: center;"><input type="checkbox" id="portraitLogos" onchange="updateLink()" style="width: 18px; height: 18px; accent-color: #8b0000; cursor: pointer;"></div>
+                    <div style="flex: 1; text-align: center;"><input type="checkbox" id="posterLogos" onchange="updateLink()" style="width: 18px; height: 18px; accent-color: #8b0000; cursor: pointer;"></div>
+                    <div style="flex: 1; text-align: center;"><input type="checkbox" id="backdropLogos" onchange="updateLink()" style="width: 18px; height: 18px; accent-color: #8b0000; cursor: pointer;"></div>
                 </div>
                 <div style="display: flex; justify-content: space-between; align-items: center; background: #2a2a2a; padding: 12px; border-radius: 6px; border: 1px solid #333; margin-bottom: 10px;">
                     <span style="flex: 1.5; color: #fff; font-size: 15px;">Ranked</span>
-                    <div style="flex: 1; text-align: center;"><input type="checkbox" id="landscapeRanked" onchange="updateLink()" style="width: 18px; height: 18px; accent-color: #8b0000; cursor: pointer;"></div>
-                    <div style="flex: 1; text-align: center;"><input type="checkbox" id="portraitRanked" checked onchange="updateLink()" style="width: 18px; height: 18px; accent-color: #8b0000; cursor: pointer;"></div>
+                    <div style="flex: 1; text-align: center;"><input type="checkbox" id="posterRanked" checked onchange="updateLink()" style="width: 18px; height: 18px; accent-color: #8b0000; cursor: pointer;"></div>
+                    <div style="flex: 1; text-align: center;"><input type="checkbox" id="backdropRanked" onchange="updateLink()" style="width: 18px; height: 18px; accent-color: #8b0000; cursor: pointer;"></div>
                 </div>
                 <div style="display: flex; justify-content: space-between; align-items: center; background: #2a2a2a; padding: 12px; border-radius: 6px; border: 1px solid #333; margin-bottom: 10px;">
                     <span style="flex: 1.5; color: #fff; font-size: 15px;">Language <span class="tooltip">?<span class="tooltiptext">If unavailable, falls back to media source language.</span></span></span>
-                    <div style="flex: 2; text-align: center;">
-                        <select id="posterLang" onchange="updateLink()" style="width: 97.5%; padding: 6px; font-size: 12px; background: #1e1e1e; border: 1px solid #444; color: #fff; border-radius: 4px; outline: none;"><option value="en" selected>English</option><option value="ja">Japanese</option><option value="ko">Korean</option><option value="es">Spanish</option><option value="fr">French</option><option value="de">German</option><option value="hi">Hindi</option><option value="null">Textless</option></select>
-                    </div>
+                    <div style="flex: 1; text-align: center;"><select id="posterLanguage" onchange="updateLink()" style="width: 97.5%; padding: 6px; font-size: 12px; background: #1e1e1e; border: 1px solid #444; color: #fff; border-radius: 4px; outline: none;"><option value="en" selected>English</option><option value="ja">Japanese</option><option value="ko">Korean</option><option value="es">Spanish</option><option value="fr">French</option><option value="de">German</option><option value="hi">Hindi</option><option value="null">Textless</option></select></div>
+                    <div style="flex: 1; text-align: center;"><select id="backdropLanguage" onchange="updateLink()" style="width: 97.5%; padding: 6px; font-size: 12px; background: #1e1e1e; border: 1px solid #444; color: #fff; border-radius: 4px; outline: none;"><option value="en" selected>English</option><option value="ja">Japanese</option><option value="ko">Korean</option><option value="es">Spanish</option><option value="fr">French</option><option value="de">German</option><option value="hi">Hindi</option><option value="null">Textless</option></select></div>
                 </div>
             </div>
             
@@ -1419,11 +1443,18 @@ const configUI = `<!DOCTYPE html>
                         <button id="copyBtn" onclick="copyLink('manifestUrl', 'copyBtn')">Copy</button>
                     </div>
                 </div>
-                <div class="form-group">
-                    <label>AIOMetadata Poster Pattern URL <span class="tooltip">?<span class="tooltiptext">Uses portrait poster config. Add it to AIOMetadata by pasting it at: Art Providers → Art URL Overrides → URL Patterns → Poster URL Pattern</span></span></label>
+                <div class="form-group" id="posterPatternGroup">
+                    <label>Poster URL Pattern <span class="tooltip">?<span class="tooltiptext">Uses poster art config. Add it to AIOMetadata by pasting it at: Art Providers → Art URL Overrides → URL Patterns → Poster URL Pattern</span></span></label>
                     <div class="link-container">
                         <input type="text" id="patternUrl" readonly style="font-size: 12px;">
                         <button id="copyPatternBtn" onclick="copyLink('patternUrl', 'copyPatternBtn')">Copy</button>
+                    </div>
+                </div>
+                <div class="form-group" id="landscapePatternGroup" style="display: none;">
+                    <label>Landscape URL Pattern <span class="tooltip">?<span class="tooltiptext">Uses poster art config. Add it to AIOMetadata by pasting it at: Art Providers → Art URL Overrides → URL Patterns → Landscape URL Pattern</span></span></label>
+                    <div class="link-container">
+                        <input type="text" id="landscapePatternUrl" readonly style="font-size: 12px;">
+                        <button id="copyLandscapePatternBtn" onclick="copyLink('landscapePatternUrl', 'copyLandscapePatternBtn')">Copy</button>
                     </div>
                 </div>
                 <button id="installBtn" class="main-btn">Install</button>
@@ -1434,8 +1465,8 @@ const configUI = `<!DOCTYPE html>
             <div style="display: flex; justify-content: space-between; align-items: center; width: 100%; margin-bottom: 25px;">
                 <h2 style="margin: 0;">Catalog Preview</h2>
                 <select id="previewMode" onchange="renderCurrentData()" style="width: auto; padding: 8px; margin-bottom: 0;">
-                    <option value="landscape" selected>Landscape</option>
-                    <option value="portrait">Portrait</option>
+                    <option value="poster" selected>Poster</option>
+                    <option value="backdrop">Backdrop</option>
                 </select>
             </div>
             <div class="preview-section">
@@ -1452,6 +1483,54 @@ const configUI = `<!DOCTYPE html>
         let previewTimeout;
         let currentShows = [];
         let currentMovies = [];
+        const routeParts = window.location.pathname.split('/').filter(Boolean);
+        const configureIndex = routeParts.lastIndexOf('configure');
+        const configSegment = configureIndex > 0 ? decodeURIComponent(routeParts[configureIndex - 1]) : '';
+        const initialConfig = {};
+        configSegment.split('|').forEach(pair => {
+            const [key, ...valueParts] = pair.split('=');
+            if (key && valueParts.length) initialConfig[key] = decodeURIComponent(valueParts.join('='));
+        });
+
+        function initialConfigValue(...keys) {
+            for (const key of keys) {
+                if (Object.prototype.hasOwnProperty.call(initialConfig, key)) return initialConfig[key];
+            }
+            return undefined;
+        }
+
+        function setConfiguredCheckbox(id, keys, isEnabled) {
+            const value = initialConfigValue(...keys);
+            if (value !== undefined) document.getElementById(id).checked = isEnabled(value);
+        }
+
+        function initializeConfigControls() {
+            setConfiguredCheckbox('posterTags', ['posterTags', 'portraitTags', 'tags'], value => value !== 'false');
+            setConfiguredCheckbox('backdropTags', ['backdropTags', 'landscapeTags', 'tags'], value => value !== 'false');
+            setConfiguredCheckbox('posterLogos', ['posterLogos', 'portraitLogos', 'logos'], value => value === 'true');
+            setConfiguredCheckbox('backdropLogos', ['backdropLogos', 'landscapeLogos', 'logos'], value => value === 'true');
+            setConfiguredCheckbox('posterRanked', ['posterRanked', 'portraitRanked', 'ranked'], value => value !== 'false');
+            setConfiguredCheckbox('backdropRanked', ['backdropRanked', 'landscapeRanked'], value => value === 'true');
+            setConfiguredCheckbox('digitalOnly', ['digitalOnly'], value => value !== 'false');
+
+            const posterLanguage = initialConfigValue('posterLanguage', 'portraitPosterLang', 'posterLang');
+            const backdropLanguage = initialConfigValue('backdropLanguage', 'landscapePosterLang', 'posterLang');
+            if (posterLanguage !== undefined) document.getElementById('posterLanguage').value = posterLanguage;
+            if (backdropLanguage !== undefined) document.getElementById('backdropLanguage').value = backdropLanguage;
+
+            const posterShape = initialConfigValue('posterShape');
+            if (posterShape === 'portrait' || posterShape === 'landscape') {
+                document.getElementById('posterShape').value = posterShape;
+            }
+
+            const listLang = initialConfigValue('listLang');
+            if (listLang !== undefined) {
+                const selectedLanguages = listLang.split(',');
+                document.querySelectorAll('#listLangOptions input').forEach(input => {
+                    input.checked = selectedLanguages.includes(input.value);
+                });
+            }
+        }
 
         function toggleMultiSelect() {
             document.getElementById('listLangOptions').classList.toggle('show');
@@ -1479,13 +1558,15 @@ const configUI = `<!DOCTYPE html>
         }
 
         function updateLink() {
-            const lt = document.getElementById('landscapeTags').checked,
-                  llo = document.getElementById('landscapeLogos').checked,
-                  lr = document.getElementById('landscapeRanked').checked,
-                  pt = document.getElementById('portraitTags').checked,
-                  plo = document.getElementById('portraitLogos').checked,
-                  pr_chk = document.getElementById('portraitRanked').checked,
-                  plang = document.getElementById('posterLang').value,
+            const backdropTags = document.getElementById('backdropTags').checked,
+                backdropLogos = document.getElementById('backdropLogos').checked,
+                backdropRanked = document.getElementById('backdropRanked').checked,
+                posterTags = document.getElementById('posterTags').checked,
+                posterLogos = document.getElementById('posterLogos').checked,
+                posterRanked = document.getElementById('posterRanked').checked,
+                backdropLanguage = document.getElementById('backdropLanguage').value,
+                posterLanguage = document.getElementById('posterLanguage').value,
+                  shape = document.getElementById('posterShape').value,
                   d = document.getElementById('digitalOnly').checked;
                   
             const checkedLangs = Array.from(document.querySelectorAll('#listLangOptions input:checked'));
@@ -1496,29 +1577,49 @@ const configUI = `<!DOCTYPE html>
             else if (checkedLangs.length <= 2) box.textContent = checkedLangs.map(cb => cb.parentElement.textContent.trim()).join(', ');
             else box.textContent = checkedLangs.length + ' Languages Selected';
                   
-            const c = "landscapeTags=" + lt + "|landscapeLogos=" + llo + "|landscapeRanked=" + lr + "|portraitTags=" + pt + "|portraitLogos=" + plo + "|portraitRanked=" + pr_chk + "|posterLang=" + plang + "|digitalOnly=" + d + "|listLang=" + l;
+            const c = "backdropTags=" + backdropTags + "|backdropLogos=" + backdropLogos + "|backdropRanked=" + backdropRanked + "|backdropLanguage=" + backdropLanguage + "|posterTags=" + posterTags + "|posterLogos=" + posterLogos + "|posterRanked=" + posterRanked + "|posterLanguage=" + posterLanguage + "|posterShape=" + shape + "|digitalOnly=" + d + "|listLang=" + l;
             const h = window.location.host, pr = window.location.protocol;
             
             // Build dynamic pattern URL
             const patternParams = new URLSearchParams();
-            if (!pt) { // if portrait tags are disabled
+            if (!posterTags) {
                 patternParams.set('tag', 'none');
             }
-            if (plo) { // if portrait logos are enabled
+            if (posterLogos) {
                 patternParams.set('logos', '1');
             }
-            if (plang !== 'en') { // if language is not the default
-                patternParams.set('lang', plang);
+            if (posterLanguage !== 'en') {
+                patternParams.set('lang', posterLanguage);
             }
-            if (pr_chk) {
+            if (posterRanked) {
                 patternParams.set('ranked', '1');
             }
             patternParams.set('listLang', l);
             patternParams.set('digitalOnly', d ? '1' : '0');
             const patternQuery = patternParams.toString() ? '?' + patternParams.toString() : '';
 
+            const landscapeParams = new URLSearchParams();
+            if (!backdropTags) {
+                landscapeParams.set('tag', 'none');
+            }
+            if (backdropLogos) {
+                landscapeParams.set('logos', '1');
+            }
+            if (backdropLanguage !== 'en') {
+                landscapeParams.set('lang', backdropLanguage);
+            }
+            if (backdropRanked) {
+                landscapeParams.set('ranked', '1');
+            }
+            landscapeParams.set('listLang', l);
+            landscapeParams.set('digitalOnly', d ? '1' : '0');
+            const landscapePatternQuery = landscapeParams.toString() ? '?' + landscapeParams.toString() : '';
+
             document.getElementById('manifestUrl').value = pr + "//" + h + "/" + c + "/manifest.json";
             document.getElementById('patternUrl').value = pr + "//" + h + "/image/{type}/{tmdb_id}.png" + patternQuery;
+            document.getElementById('landscapePatternUrl').value = pr + "//" + h + "/landscape/{type}/{tmdb_id}.png" + landscapePatternQuery;
+            document.getElementById('posterPatternGroup').style.display = shape === 'portrait' ? '' : 'none';
+            document.getElementById('landscapePatternGroup').style.display = shape === 'landscape' ? '' : 'none';
             document.getElementById('installBtn').onclick = () => { window.location.href = "stremio://" + h + "/" + c + "/manifest.json" };
             
             clearTimeout(previewTimeout);
@@ -1561,10 +1662,10 @@ const configUI = `<!DOCTYPE html>
                 if (!items || items.length === 0) return '<div class="loading">No items found</div>';
                 return items.map(item => {
                     const tmdbType = item.type === 'series' ? 'tv' : 'movie';
-                    const imgTag = mode === 'landscape' 
-                        ? '<img src="' + item.background + '" alt="bg" loading="lazy" />'
-                        : '<img src="' + item.poster + '" alt="poster" loading="lazy" />';
-                    return '<a href="https://www.themoviedb.org/' + tmdbType + '/' + item._tmdbId + '" target="_blank" class="item-card ' + mode + '">' +
+                    const imageShape = mode === 'backdrop' || item.posterShape === 'landscape' ? 'landscape' : 'portrait';
+                    const imageUrl = mode === 'backdrop' ? item.background : item.poster;
+                    const imgTag = '<img src="' + (imageUrl || '') + '" alt="' + mode + '" loading="lazy" />';
+                    return '<a href="https://www.themoviedb.org/' + tmdbType + '/' + item._tmdbId + '" target="_blank" class="item-card ' + imageShape + '">' +
                            imgTag + 
                            '<p class="item-title" title="' + item.name + '">' + item.name + '</p>' + 
                            '</a>';
@@ -1587,6 +1688,7 @@ const configUI = `<!DOCTYPE html>
                 setTimeout(() => { b.innerText = o; b.style.backgroundColor = "#8b0000" }, 2000);
             });
         }
+        initializeConfigControls();
         updateLink();
     </script>
 </body>
@@ -1607,12 +1709,28 @@ const parseConfig = (configStr) => {
 
 const addonInterface = builder.getInterface();
 
-app.get('/', (req, res) => res.send(configUI));
-app.get('/configure', (req, res) => res.send(configUI));
+app.get('/favicon.svg', (req, res) => {
+    res.type('image/svg+xml').set('Cache-Control', 'public, max-age=86400').send(FAVICON_SVG);
+});
+app.get('/', (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    res.send(configUI);
+});
+app.get('/configure', (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    res.send(configUI);
+});
+app.get('/:config/configure', (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    res.send(configUI);
+});
 app.get('/manifest.json', (req, res) => res.json(addonInterface.manifest));
 app.get('/:config/manifest.json', (req, res) => {
     const configuredManifest = JSON.parse(JSON.stringify(addonInterface.manifest));
-    if (configuredManifest.behaviorHints) configuredManifest.behaviorHints.configurationRequired = false;
+    if (configuredManifest.behaviorHints) {
+        configuredManifest.behaviorHints.configurationRequired = false;
+        configuredManifest.behaviorHints.configurationURL = `${ADDON_URL}/${req.params.config}/configure`;
+    }
     res.json(configuredManifest);
 });
 
