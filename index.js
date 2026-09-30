@@ -658,7 +658,7 @@ builder.defineCatalogHandler(async (args) => {
         if (pageItems.length > 0) {
             const detailsData = await Promise.all(pageItems.map(async (item) => {
                 try {
-                    return await fetchTmdbJson(`https://api.themoviedb.org/3/${tmdbType}/${item.id}?api_key=${TMDB_API_KEY}&append_to_response=external_ids,images&include_image_language=${item.original_language},en,null`);
+                    return await fetchTmdbJson(`https://api.themoviedb.org/3/${tmdbType}/${item.id}?api_key=${TMDB_API_KEY}&append_to_response=external_ids,images`);
                 } catch { return null; }
             }));
             pageItems.forEach((item, index) => item._details = detailsData[index]);
@@ -752,7 +752,7 @@ builder.defineCatalogHandler(async (args) => {
             if (needsTags) {
                 const tvDetailsData = await Promise.all(pageItems.map(async (show) => {
                     try {
-                        const data = await fetchTmdbJson(`https://api.themoviedb.org/3/tv/${show.id}?api_key=${TMDB_API_KEY}&append_to_response=external_ids,images&include_image_language=${show.original_language},en,null`);
+                        const data = await fetchTmdbJson(`https://api.themoviedb.org/3/tv/${show.id}?api_key=${TMDB_API_KEY}&append_to_response=external_ids,images`);
 
                         let nextEp = data.next_episode_to_air;
                         if (nextEp && nextEp.air_date) {
@@ -905,10 +905,6 @@ builder.defineCatalogHandler(async (args) => {
 
         const lTag = userConfig.backdropTags ? (item._tag || 'none') : 'none';
         const finalBackground = `${ADDON_URL}/backdrop/${item.id}.png?type=${type}&tag=${lTag}&rank=${userConfig.backdropRanked ? rank : 'none'}&lang=${userConfig.backdropLanguage}&logos=${userConfig.backdropLogos ? '1' : '0'}`;
-        const textlessBackdrop = item._details?.images?.backdrops?.find(backdrop => backdrop.iso_639_1 === null);
-        const background = userConfig.posterShape === 'landscape'
-            ? (textlessBackdrop?.file_path ? `https://image.tmdb.org/t/p/original${textlessBackdrop.file_path}` : null)
-            : finalBackground;
 
         return {
             id: imdbId || `tmdb:${item.id}`,
@@ -919,7 +915,7 @@ builder.defineCatalogHandler(async (args) => {
             genres: itemGenres,
             description: item.overview || "",
             ...(titleLogo?.file_path ? { logo: `https://image.tmdb.org/t/p/original${titleLogo.file_path}` } : {}),
-            background,
+            background: finalBackground,
             poster: userConfig.posterShape === 'portrait' ? finalPosterUrl : landscapePosterUrl
         };
     });
