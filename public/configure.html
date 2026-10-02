@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>TMDB Top Today</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="icon" href="{{FAVICON_URL}}" type="image/svg+xml">
+    <style>
+        body { font-family: 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #121212; color: #fff; margin: 0; padding: 20px; box-sizing: border-box; height: 100vh; overflow: hidden; }
+        .wrapper { display: flex; flex-direction: row; gap: 30px; width: 100%; height: 100%; max-width: none; align-items: stretch; }
+        .container { background-color: #1e1e1e; padding: 30px; border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,.5); flex: 0 0 420px; min-width: 420px; box-sizing: border-box; display: flex; flex-direction: column; height: 100%; max-height: 100%; overflow-y: auto; }
+        .preview-container { background-color: #1e1e1e; padding: 30px; border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,.5); flex: 1; min-width: 0; box-sizing: border-box; display: flex; flex-direction: column; height: 100%; max-height: 100%; overflow-y: auto; }
+        h2 { margin-top: 0; text-align: center; color: #e0e0e0; margin-bottom: 25px; }
+        .form-group { margin-bottom: 20px; }
+        label { display: block; margin-bottom: 8px; font-weight: 600; font-size: 14px; color: #b3b3b3; }
+        select { width: 100%; padding: 12px; border-radius: 6px; border: 1px solid #333; background: #2a2a2a; color: #fff; font-size: 14px; outline: none; box-sizing: border-box; }
+        select:focus { border-color: #8b0000; }
+        .checkbox-group { display: flex; align-items: center; background: #2a2a2a; padding: 12px; border-radius: 6px; border: 1px solid #333; cursor: pointer; margin-bottom: 10px; }
+        .checkbox-group input { margin-right: 12px; width: 18px; height: 18px; cursor: pointer; accent-color: #8b0000; }
+        .checkbox-group span { margin-bottom: 0; cursor: pointer; color: #fff; font-size: 15px; }
+        .link-container { display: flex; gap: 10px; margin-top: 5px; }
+        .link-container input { flex-grow: 1; padding: 12px; border-radius: 6px; border: 1px solid #333; background: #2a2a2a; color: #aaa; font-size: 13px; outline: none; }
+        .link-container button { width: auto; margin-top: 0; padding: 0 20px; background-color: #8b0000; color: #fff; font-size: 14px; font-weight: 700; border: none; border-radius: 6px; cursor: pointer; transition: background .2s; }
+        .link-container button:hover { background-color: #660000; }
+        .main-btn { width: 100%; padding: 14px; border: none; border-radius: 6px; background-color: #8b0000; color: #fff; font-size: 16px; font-weight: 700; cursor: pointer; transition: background .2s; }
+        .main-btn:hover { background-color: #660000; }
+        .preview-section { width: 100%; }
+        .row-title { color: #e0e0e0; margin: 0 0 15px 0; font-size: 16px; border-bottom: 1px solid #333; padding-bottom: 8px; }
+        .horizontal-scroll { display: flex; overflow-x: auto; gap: 15px; padding-bottom: 15px; align-items: flex-start; }
+        .horizontal-scroll::-webkit-scrollbar { height: 8px; }
+        .horizontal-scroll::-webkit-scrollbar-track { background: #2a2a2a; border-radius: 4px; }
+        .horizontal-scroll::-webkit-scrollbar-thumb { background: #555; border-radius: 4px; }
+        .horizontal-scroll::-webkit-scrollbar-thumb:hover { background: #8b0000; }
+        .item-card { display: flex; flex-direction: column; gap: 10px; text-decoration: none; }
+        .item-card.landscape { width: 280px; }
+        .item-card.portrait { width: 150px; }
+        .item-card img { object-fit: cover; border-radius: 6px; background-color: #2a2a2a; }
+        .item-card.landscape img { width: 280px; aspect-ratio: 16/9; }
+        .item-card.portrait img { width: 150px; aspect-ratio: 2/3; }
+        .item-title { font-size: 13px; color: #b3b3b3; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; width: 100%; margin: 0; }
+        .loading { color: #aaa; font-style: italic; font-size: 14px; padding: 20px 0; text-align: center; width: 100%; align-self: center; }
+        .multi-select { position: relative; width: 100%; margin-bottom: 15px; user-select: none; }
+        .select-box { padding: 12px; border-radius: 6px; border: 1px solid #333; background: #2a2a2a; color: #fff; font-size: 14px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; }
+        .select-box::after { content: "▼"; font-size: 10px; color: #aaa; }
+        .options-container { position: absolute; top: 100%; left: 0; right: 0; background: #2a2a2a; border: 1px solid #333; border-radius: 6px; max-height: 200px; overflow-y: auto; z-index: 100; display: none; flex-direction: column; margin-top: 4px; box-shadow: 0 4px 10px rgba(0,0,0,0.5); }
+        .options-container.show { display: flex; }
+        .options-container label { padding: 10px 12px; margin: 0; cursor: pointer; display: flex; align-items: center; border-bottom: 1px solid #333; color: #fff; font-size: 14px; font-weight: 400; }
+        .options-container label:last-child { border-bottom: none; }
+        .options-container label:hover { background: #333; }
+        .options-container input { margin-right: 10px; width: 16px; height: 16px; accent-color: #8b0000; cursor: pointer; }
+        .tooltip { position: relative; display: inline-flex; justify-content: center; align-items: center; background: #444; color: #ddd; border-radius: 50%; width: 16px; height: 16px; font-size: 12px; font-weight: bold; margin-left: 6px; cursor: help; }
+        .tooltip .tooltiptext { visibility: hidden; width: 220px; background-color: #333; color: #fff; text-align: center; border-radius: 6px; padding: 8px; position: absolute; z-index: 10; bottom: 125%; left: 50%; transform: translateX(-50%); opacity: 0; transition: opacity 0.2s; font-size: 12px; font-weight: 400; box-shadow: 0 4px 10px rgba(0,0,0,0.5); pointer-events: none; line-height: 1.4; }
+        .tooltip .tooltiptext::after { content: ""; position: absolute; top: 100%; left: 50%; transform: translateX(-50%); border-width: 5px; border-style: solid; border-color: #333 transparent transparent transparent; }
+        .tooltip:hover .tooltiptext { visibility: visible; opacity: 1; }
+        @media (max-width: 768px) {
+            body { padding: 10px; height: auto; overflow: auto; }
+            .wrapper { flex-direction: column; height: auto; }
+            .container, .preview-container { flex: none; width: 100%; max-width: 100%; min-width: 0; height: auto; max-height: none; overflow-y: visible; padding: 20px; }
+            .item-card.landscape { width: 220px; }
+            .item-card.landscape img { width: 220px; }
+            .item-card.portrait { width: 120px; }
+            .item-card.portrait img { width: 120px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="wrapper">
+        <div class="container">
+            <h2>TMDB Top Today</h2>
+
+            <div class="form-group">
+                <h3 style="color: #e0e0e0; margin: 0 0 15px 0; font-size: 16px; border-bottom: 1px solid #333; padding-bottom: 8px;">Catalog Filters</h3>
+                <label>Language</label>
+                <div class="multi-select" id="listLangSelect">
+                    <div class="select-box" onclick="toggleMultiSelect()">English</div>
+                    <div class="options-container" id="listLangOptions">
+                        <label><input type="checkbox" value="all" onchange="handleLangChange(this)"> All</label>
+                        <label><input type="checkbox" value="en" checked onchange="handleLangChange(this)"> English</label>
+                        <label><input type="checkbox" value="non-en" onchange="handleLangChange(this)"> Global (non English)</label>
+                        <label><input type="checkbox" value="ja" onchange="handleLangChange(this)"> Japanese</label>
+                        <label><input type="checkbox" value="ko" onchange="handleLangChange(this)"> Korean</label>
+                        <label><input type="checkbox" value="es" onchange="handleLangChange(this)"> Spanish</label>
+                        <label><input type="checkbox" value="fr" onchange="handleLangChange(this)"> French</label>
+                        <label><input type="checkbox" value="de" onchange="handleLangChange(this)"> German</label>
+                        <label><input type="checkbox" value="hi" onchange="handleLangChange(this)"> Hindi</label>
+                    </div>
+                </div>
+                <label for="posterShape">Poster Style</label>
+                <select id="posterShape" onchange="updateLink()" style="margin-bottom: 15px;">
+                    <option value="portrait" selected>Portrait</option>
+                    <option value="landscape">Landscape</option>
+                </select>
+                <label class="checkbox-group" for="digitalOnly"><input type="checkbox" id="digitalOnly" checked onchange="updateLink()"><span>Filter Movies Not Released Digitally</span></label>
+            </div>
+            
+            <div class="form-group">
+                <h3 style="color: #e0e0e0; margin: 0 0 15px 0; font-size: 16px; border-bottom: 1px solid #333; padding-bottom: 8px;">Art Config</h3>
+                <div style="display: flex; justify-content: space-between; margin-bottom: 10px; color: #b3b3b3; font-weight: 600; font-size: 14px; padding: 0 10px;">
+                    <span style="flex: 1.5;">Config</span>
+                    <span style="flex: 1; text-align: center;">Poster</span>
+                    <span style="flex: 1; text-align: center;">Backdrop</span>
+                </div>
+                <div style="display: flex; justify-content: space-between; align-items: center; background: #2a2a2a; padding: 12px; border-radius: 6px; border: 1px solid #333; margin-bottom: 10px;">
+                    <span style="flex: 1.5; color: #fff; font-size: 15px;">Tags</span>
+                    <div style="flex: 1; text-align: center;"><input type="checkbox" id="posterTags" checked onchange="updateLink()" style="width: 18px; height: 18px; accent-color: #8b0000; cursor: pointer;"></div>
+                    <div style="flex: 1; text-align: center;"><input type="checkbox" id="backdropTags" checked onchange="updateLink()" style="width: 18px; height: 18px; accent-color: #8b0000; cursor: pointer;"></div>
+                </div>
+                <div style="display: flex; justify-content: space-between; align-items: center; background: #2a2a2a; padding: 12px; border-radius: 6px; border: 1px solid #333; margin-bottom: 10px;">
+                    <span style="flex: 1.5; color: #fff; font-size: 15px;">Streaming Logos</span>
+                    <div style="flex: 1; text-align: center;"><input type="checkbox" id="posterLogos" onchange="updateLink()" style="width: 18px; height: 18px; accent-color: #8b0000; cursor: pointer;"></div>
+                    <div style="flex: 1; text-align: center;"><input type="checkbox" id="backdropLogos" onchange="updateLink()" style="width: 18px; height: 18px; accent-color: #8b0000; cursor: pointer;"></div>
+                </div>
+                <div style="display: flex; justify-content: space-between; align-items: center; background: #2a2a2a; padding: 12px; border-radius: 6px; border: 1px solid #333; margin-bottom: 10px;">
+                    <span style="flex: 1.5; color: #fff; font-size: 15px;">Ranked</span>
+                    <div style="flex: 1; text-align: center;"><input type="checkbox" id="posterRanked" checked onchange="updateLink()" style="width: 18px; height: 18px; accent-color: #8b0000; cursor: pointer;"></div>
+                    <div style="flex: 1; text-align: center;"><input type="checkbox" id="backdropRanked" onchange="updateLink()" style="width: 18px; height: 18px; accent-color: #8b0000; cursor: pointer;"></div>
+                </div>
+                <div style="display: flex; justify-content: space-between; align-items: center; background: #2a2a2a; padding: 12px; border-radius: 6px; border: 1px solid #333; margin-bottom: 10px;">
+                    <span style="flex: 1.5; color: #fff; font-size: 15px;">Language <span class="tooltip">?<span class="tooltiptext">If unavailable, falls back to media source language.</span></span></span>
+                    <div style="flex: 1; text-align: center;"><select id="posterLanguage" onchange="updateLink()" style="width: 97.5%; padding: 6px; font-size: 12px; background: #1e1e1e; border: 1px solid #444; color: #fff; border-radius: 4px; outline: none;"><option value="en" selected>English</option><option value="ja">Japanese</option><option value="ko">Korean</option><option value="es">Spanish</option><option value="fr">French</option><option value="de">German</option><option value="hi">Hindi</option><option value="null">Textless</option></select></div>
+                    <div style="flex: 1; text-align: center;"><select id="backdropLanguage" onchange="updateLink()" style="width: 97.5%; padding: 6px; font-size: 12px; background: #1e1e1e; border: 1px solid #444; color: #fff; border-radius: 4px; outline: none;"><option value="en" selected>English</option><option value="ja">Japanese</option><option value="ko">Korean</option><option value="es">Spanish</option><option value="fr">French</option><option value="de">German</option><option value="hi">Hindi</option><option value="null">Textless</option></select></div>
+                </div>
+            </div>
+            
+            <div style="margin-top: auto;">
+                <div class="form-group">
+                    <label>Manifest URL</label>
+                    <div class="link-container">
+                        <input type="text" id="manifestUrl" readonly style="font-size: 12px;">
+                        <button id="copyBtn" onclick="copyLink('manifestUrl', 'copyBtn')">Copy</button>
+                    </div>
+                </div>
+                <div class="form-group" id="posterPatternGroup">
+                    <label>Poster URL Pattern <span class="tooltip">?<span class="tooltiptext">Uses poster art config. Add it to AIOMetadata by pasting it at: Art Providers → Art URL Overrides → URL Patterns → Poster URL Pattern</span></span></label>
+                    <div class="link-container">
+                        <input type="text" id="patternUrl" readonly style="font-size: 12px;">
+                        <button id="copyPatternBtn" onclick="copyLink('patternUrl', 'copyPatternBtn')">Copy</button>
+                    </div>
+                </div>
+                <div class="form-group" id="landscapePatternGroup" style="display: none;">
+                    <label>Landscape URL Pattern <span class="tooltip">?<span class="tooltiptext">Uses poster art config. Add it to AIOMetadata by pasting it at: Art Providers → Art URL Overrides → URL Patterns → Landscape URL Pattern</span></span></label>
+                    <div class="link-container">
+                        <input type="text" id="landscapePatternUrl" readonly style="font-size: 12px;">
+                        <button id="copyLandscapePatternBtn" onclick="copyLink('landscapePatternUrl', 'copyLandscapePatternBtn')">Copy</button>
+                    </div>
+                </div>
+                <button id="installBtn" class="main-btn">Install</button>
+            </div>
+        </div>
+        
+        <div class="preview-container">
+            <div style="display: flex; justify-content: space-between; align-items: center; width: 100%; margin-bottom: 25px;">
+                <h2 style="margin: 0;">Catalog Preview</h2>
+                <select id="previewMode" onchange="renderCurrentData()" style="width: auto; padding: 8px; margin-bottom: 0;">
+                    <option value="poster" selected>Poster</option>
+                    <option value="backdrop">Backdrop</option>
+                </select>
+            </div>
+            <div class="preview-section">
+                <h3 class="row-title">Top Shows Today</h3>
+                <div id="shows-preview" class="horizontal-scroll"><div class="loading">Loading shows...</div></div>
+            </div>
+            <div class="preview-section" style="margin-top: 20px;">
+                <h3 class="row-title">Top Movies Today</h3>
+                <div id="movies-preview" class="horizontal-scroll"><div class="loading">Loading movies...</div></div>
+            </div>
+        </div>
+    </div>
+    <script>
+        let previewTimeout;
+        let previewSeq = 0; // lets a newer preview request supersede slower, older ones
+        let currentShows = [];
+        let currentMovies = [];
+        const routeParts = window.location.pathname.split('/').filter(Boolean);
+        const configureIndex = routeParts.lastIndexOf('configure');
+        const configSegment = configureIndex > 0 ? decodeURIComponent(routeParts[configureIndex - 1]) : '';
+        const initialConfig = {};
+        configSegment.split('|').forEach(pair => {
+            const [key, ...valueParts] = pair.split('=');
+            if (key && valueParts.length) initialConfig[key] = decodeURIComponent(valueParts.join('='));
+        });
+
+        function initialConfigValue(...keys) {
+            for (const key of keys) {
+                if (Object.prototype.hasOwnProperty.call(initialConfig, key)) return initialConfig[key];
+            }
+            return undefined;
+        }
+
+        function setConfiguredCheckbox(id, keys, isEnabled) {
+            const value = initialConfigValue(...keys);
+            if (value !== undefined) document.getElementById(id).checked = isEnabled(value);
+        }
+
+        function initializeConfigControls() {
+            setConfiguredCheckbox('posterTags', ['posterTags', 'portraitTags', 'tags'], value => value !== 'false');
+            setConfiguredCheckbox('backdropTags', ['backdropTags', 'landscapeTags', 'tags'], value => value !== 'false');
+            setConfiguredCheckbox('posterLogos', ['posterLogos', 'portraitLogos', 'logos'], value => value === 'true');
+            setConfiguredCheckbox('backdropLogos', ['backdropLogos', 'landscapeLogos', 'logos'], value => value === 'true');
+            setConfiguredCheckbox('posterRanked', ['posterRanked', 'portraitRanked', 'ranked'], value => value !== 'false');
+            setConfiguredCheckbox('backdropRanked', ['backdropRanked', 'landscapeRanked'], value => value === 'true');
+            setConfiguredCheckbox('digitalOnly', ['digitalOnly'], value => value !== 'false');
+
+            const posterLanguage = initialConfigValue('posterLanguage', 'portraitPosterLang', 'posterLang');
+            const backdropLanguage = initialConfigValue('backdropLanguage', 'landscapePosterLang', 'posterLang');
+            if (posterLanguage !== undefined) document.getElementById('posterLanguage').value = posterLanguage;
+            if (backdropLanguage !== undefined) document.getElementById('backdropLanguage').value = backdropLanguage;
+
+            const posterShape = initialConfigValue('posterShape');
+            if (posterShape === 'portrait' || posterShape === 'landscape') {
+                document.getElementById('posterShape').value = posterShape;
+            }
+
+            const listLang = initialConfigValue('listLang');
+            if (listLang !== undefined) {
+                const selectedLanguages = listLang.split(',');
+                document.querySelectorAll('#listLangOptions input').forEach(input => {
+                    input.checked = selectedLanguages.includes(input.value);
+                });
+            }
+        }
+
+        function toggleMultiSelect() {
+            document.getElementById('listLangOptions').classList.toggle('show');
+        }
+
+        document.addEventListener('click', function(e) {
+            if (!e.target.closest('.multi-select')) {
+                const opts = document.getElementById('listLangOptions');
+                if (opts) opts.classList.remove('show');
+            }
+        });
+
+        function handleLangChange(cb) {
+            if ((cb.value === 'all' || cb.value === 'non-en') && cb.checked) {
+                document.querySelectorAll('#listLangOptions input').forEach(input => {
+                    if (input !== cb) input.checked = false;
+                });
+            } else if (cb.checked) {
+                const allCb = document.querySelector('#listLangOptions input[value="all"]');
+                if (allCb) allCb.checked = false;
+                const nonEnCb = document.querySelector('#listLangOptions input[value="non-en"]');
+                if (nonEnCb) nonEnCb.checked = false;
+            }
+            updateLink();
+        }
+
+        function updateLink() {
+            const backdropTags = document.getElementById('backdropTags').checked,
+                backdropLogos = document.getElementById('backdropLogos').checked,
+                backdropRanked = document.getElementById('backdropRanked').checked,
+                posterTags = document.getElementById('posterTags').checked,
+                posterLogos = document.getElementById('posterLogos').checked,
+                posterRanked = document.getElementById('posterRanked').checked,
+                backdropLanguage = document.getElementById('backdropLanguage').value,
+                posterLanguage = document.getElementById('posterLanguage').value,
+                  shape = document.getElementById('posterShape').value,
+                  d = document.getElementById('digitalOnly').checked;
+                  
+            const checkedLangs = Array.from(document.querySelectorAll('#listLangOptions input:checked'));
+            const l = checkedLangs.map(opt => opt.value).join(',') || 'all';
+            
+            const box = document.querySelector('.select-box');
+            if (checkedLangs.length === 0) box.textContent = 'All';
+            else if (checkedLangs.length <= 2) box.textContent = checkedLangs.map(cb => cb.parentElement.textContent.trim()).join(', ');
+            else box.textContent = checkedLangs.length + ' Languages Selected';
+                  
+            const c = "backdropTags=" + backdropTags + "|backdropLogos=" + backdropLogos + "|backdropRanked=" + backdropRanked + "|backdropLanguage=" + backdropLanguage + "|posterTags=" + posterTags + "|posterLogos=" + posterLogos + "|posterRanked=" + posterRanked + "|posterLanguage=" + posterLanguage + "|posterShape=" + shape + "|digitalOnly=" + d + "|listLang=" + l;
+            const h = window.location.host, pr = window.location.protocol;
+            
+            // Build dynamic pattern URL
+            const patternParams = new URLSearchParams();
+            if (!posterTags) {
+                patternParams.set('tag', 'none');
+            }
+            if (posterLogos) {
+                patternParams.set('logos', '1');
+            }
+            if (posterLanguage !== 'en') {
+                patternParams.set('lang', posterLanguage);
+            }
+            if (posterRanked) {
+                patternParams.set('ranked', '1');
+            }
+            patternParams.set('listLang', l);
+            patternParams.set('digitalOnly', d ? '1' : '0');
+            const patternQuery = patternParams.toString() ? '?' + patternParams.toString() : '';
+
+            const landscapeParams = new URLSearchParams();
+            if (!backdropTags) {
+                landscapeParams.set('tag', 'none');
+            }
+            if (backdropLogos) {
+                landscapeParams.set('logos', '1');
+            }
+            if (backdropLanguage !== 'en') {
+                landscapeParams.set('lang', backdropLanguage);
+            }
+            if (backdropRanked) {
+                landscapeParams.set('ranked', '1');
+            }
+            landscapeParams.set('listLang', l);
+            landscapeParams.set('digitalOnly', d ? '1' : '0');
+            const landscapePatternQuery = landscapeParams.toString() ? '?' + landscapeParams.toString() : '';
+
+            document.getElementById('manifestUrl').value = pr + "//" + h + "/" + c + "/manifest.json";
+            document.getElementById('patternUrl').value = pr + "//" + h + "/image/{type}/{tmdb_id}.png" + patternQuery;
+            document.getElementById('landscapePatternUrl').value = pr + "//" + h + "/landscape/{type}/{tmdb_id}.png" + landscapePatternQuery;
+            document.getElementById('posterPatternGroup').style.display = shape === 'portrait' ? '' : 'none';
+            document.getElementById('landscapePatternGroup').style.display = shape === 'landscape' ? '' : 'none';
+            document.getElementById('installBtn').onclick = () => { window.location.href = "stremio://" + h + "/" + c + "/manifest.json" };
+            
+            clearTimeout(previewTimeout);
+            previewTimeout = setTimeout(() => updatePreviews(c, pr, h), 500);
+        }
+        
+        async function updatePreviews(config, pr, h) {
+            const seq = ++previewSeq;
+            const showsContainer = document.getElementById('shows-preview');
+            const moviesContainer = document.getElementById('movies-preview');
+            
+            showsContainer.innerHTML = '<div class="loading">Loading shows...</div>';
+            moviesContainer.innerHTML = '<div class="loading">Loading movies...</div>';
+            
+            try {
+                const [showsRes, moviesRes] = await Promise.all([
+                    fetch(pr + "//" + h + "/" + config + "/catalog/series/top_shows_today.json"),
+                    fetch(pr + "//" + h + "/" + config + "/catalog/movie/top_movies_today.json")
+                ]);
+                
+                const showsData = await showsRes.json();
+                const moviesData = await moviesRes.json();
+                if (seq !== previewSeq) return; // a newer settings change has superseded this response
+                
+                currentShows = showsData.metas || [];
+                currentMovies = moviesData.metas || [];
+                
+                renderCurrentData();
+                
+            } catch (err) {
+                if (seq !== previewSeq) return;
+                showsContainer.innerHTML = '<div class="loading">Error loading preview</div>';
+                moviesContainer.innerHTML = '<div class="loading">Error loading preview</div>';
+            }
+        }
+        
+        // Titles come from TMDB (user-contributed data), so the cards are built with DOM APIs, never HTML strings.
+        function renderCurrentData() {
+            const showsContainer = document.getElementById('shows-preview');
+            const moviesContainer = document.getElementById('movies-preview');
+            const mode = document.getElementById('previewMode').value;
+            
+            const renderItems = (container, items) => {
+                container.replaceChildren();
+                if (!items || items.length === 0) {
+                    const empty = document.createElement('div');
+                    empty.className = 'loading';
+                    empty.textContent = 'No items found';
+                    container.appendChild(empty);
+                    return;
+                }
+                for (const item of items) {
+                    const tmdbType = item.type === 'series' ? 'tv' : 'movie';
+                    const imageShape = mode === 'backdrop' || item.posterShape === 'landscape' ? 'landscape' : 'portrait';
+                    const imageUrl = mode === 'backdrop' ? item.background : item.poster;
+
+                    const link = document.createElement('a');
+                    link.href = 'https://www.themoviedb.org/' + tmdbType + '/' + encodeURIComponent(item._tmdbId);
+                    link.target = '_blank';
+                    link.rel = 'noopener noreferrer';
+                    link.className = 'item-card ' + imageShape;
+
+                    const img = document.createElement('img');
+                    if (imageUrl) img.src = imageUrl;
+                    img.alt = mode;
+                    img.loading = 'lazy';
+
+                    const title = document.createElement('p');
+                    title.className = 'item-title';
+                    title.title = item.name;
+                    title.textContent = item.name;
+
+                    link.append(img, title);
+                    container.appendChild(link);
+                }
+            };
+            
+            renderItems(showsContainer, currentShows);
+            renderItems(moviesContainer, currentMovies);
+        }
+        
+        function copyLink(inputId, buttonId) {
+            const c = document.getElementById(inputId);
+            c.select();
+            c.setSelectionRange(0, 99999);
+            navigator.clipboard.writeText(c.value).then(() => {
+                const b = document.getElementById(buttonId);
+                const o = b.innerText;
+                b.innerText = "Copied!";
+                b.style.backgroundColor = "#660000";
+                setTimeout(() => { b.innerText = o; b.style.backgroundColor = "#8b0000" }, 2000);
+            });
+        }
+        initializeConfigControls();
+        updateLink();
+    </script>
+</body>
+</html>

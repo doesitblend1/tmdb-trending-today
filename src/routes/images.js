@@ -1,0 +1,85 @@
+'use strict';
+const { createSingleFlight } = require('../util');
+const { parseListLang } = require('../userConfig');
+const { normalizeTag } = require('../tags');
+const { parseId, parseType, parseLang, parseImageQuery, imageKey, wrap, sendPng } = require('../http');
+
+function registerImageRoutes(app, { store, artwork, trending, tags, logger = console }) {
+    // Concurrent requests for the same image share one render
+    const flights = createSingleFlight();
+
+    // ── /poster/:id.png and /backdrop/:id.png ───────────────────────────────
+    const serveArtwork = (kind) => wrap(async (req, res) => {
+        const id = parseId(req.params.id);
+        if (!id) return res.status(400).type('text').send('Invalid id');
+
+        const params = { kind, id, ...parseImageQuery(req.query) };
+        const key = imageKey(kind, id, params);
+
+        const cached = await store.get(key);
+        if (cached) return sendPng(res, cached);
+
+        const result = await flights.run(key, async () => {
+            const rendered = await artwork.render(params);
+            if (rendered.kind === 'image') store.set(key, rendered.buffer); // fire-and-forget; set() never rejects
+            return rendered;
+        });
+
+        switch (result.kind) {
+            case 'redirect': // nothing to draw: send the client straight to TMDB's copy (302: the "best" image can change)
+                res.set('Cache-Control', 'public, max-age=86400');
+                return res.redirect(302, result.url);
+            case 'placeholder': // no image on TMDB (yet): short cache so a later upload gets picked up
+                res.set({ 'Content-Type': 'image/png', 'Cache-Control': 'public, max-age=3600' });
+                return res.send(result.buffer);
+            default:
+                return sendPng(res, result.buffer);
+        }
+    });
+
+    app.get('/poster/:id.png', serveArtwork('poster'));
+    app.get('/backdrop/:id.png', serveArtwork('backdrop'));
+
+    // ── Old URL shapes still found in existing installs ─────────────────────
+    for (const [prefix, target] of [['proxy-image-backdrop', 'backdrop'], ['proxy-image-poster', 'poster']]) {
+        app.get(`/${prefix}/:type/:id/:tag/:rank/:lang/:logos.png`, (req, res) => {
+            const { type, id, tag, rank, lang, logos } = req.params;
+            const query = new URLSearchParams({ type, tag, rank: rank || 'none', lang, logos: logos || '0' });
+            res.redirect(301, `/${target}/${encodeURIComponent(id)}.png?${query}`);
+        });
+    }
+
+    // ── /image/:type/:id.png and /landscape/:type/:id.png (AIOMetadata URL patterns) ─────────
+    // The tag and rank are worked out here, then the client is sent to the real image URL.
+    const redirectPattern = (target) => wrap(async (req, res) => {
+        const id = parseId(req.params.id);
+        if (!id) return res.status(400).type('text').send('Invalid id');
+
+        const known = req.params.type === 'movie' || req.params.type === 'series';
+        const type = parseType(req.params.type);
+        const q = req.query;
+
+        let tag;
+        if (typeof q.tag === 'string' && q.tag !== '' && q.tag !== 'auto') tag = normalizeTag(q.tag);
+        else if (!known) tag = 'none';
+        else tag = type === 'movie' ? await tags.movieTag(id) : await tags.seriesTag(id);
+
+        let rank = 'none';
+        if (q.ranked === '1' || q.ranked === 'true') {
+            try {
+                rank = await trending.rankOf({ type, id, langs: parseListLang(q.listLang), digitalOnly: q.digitalOnly !== '0' });
+            } catch (err) {
+                logger.error(`Failed to determine rank for ${type}/${id}:`, err.message);
+            }
+        }
+
+        const query = new URLSearchParams({ type, tag, rank, lang: parseLang(q.lang), logos: q.logos === '1' ? '1' : '0' });
+        res.set('Cache-Control', 'public, max-age=300'); // tags change by the day, not the minute
+        res.redirect(302, `/${target}/${id}.png?${query}`);
+    });
+
+    app.get('/image/:type/:id.png', redirectPattern('poster'));
+    app.get('/landscape/:type/:id.png', redirectPattern('backdrop'));
+}
+
+module.exports = { registerImageRoutes };

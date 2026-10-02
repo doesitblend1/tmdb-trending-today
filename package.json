@@ -1,9 +1,10 @@
 {
   "name": "stremio-trending-addon",
-  "version": "1.0.0",
-  "main": "index.js",
+  "version": "2.1.0",
+  "main": "server.js",
   "scripts": {
-    "start": "node index.js"
+    "start": "node server.js",
+    "test": "node --test"
   },
   "dependencies": {
     "express": "^4.21.0",
