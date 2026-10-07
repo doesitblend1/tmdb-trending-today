@@ -37,6 +37,8 @@ function parseUserConfig(cfg = {}) {
         posterLogos: flag(pick(cfg, ['posterLogos', 'portraitLogos', 'logos']), false),
         posterRanked: flag(pick(cfg, ['posterRanked', 'portraitRanked', 'ranked']), true),
         posterLanguage: language(firstTruthy(cfg, ['posterLanguage', 'portraitPosterLang', 'posterLang'])),
+        textlessArtwork: flag(cfg.textlessArtwork, false),
+        backdropTextlessArtwork: flag(cfg.backdropTextlessArtwork, false),
         posterShape: cfg.posterShape === 'landscape' ? 'landscape' : 'portrait',
         digitalOnly: flag(cfg.digitalOnly, true),
         listLangs,

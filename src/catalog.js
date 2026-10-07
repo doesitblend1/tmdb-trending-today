@@ -5,7 +5,7 @@ const { CATALOG_SIZE } = require('./media');
 function buildManifest(addonUrl) {
     return {
         id: 'com.trending.custom',
-        version: '2.1.0',
+        version: '2.5.0',
         name: 'TMDB Top Today',
         description: 'Customizable Stremio catalogs for top trending TMDB content with optional graphic tags and ranked posters.',
         logo: `${addonUrl}/favicon.svg`,
@@ -30,12 +30,15 @@ function languageName(code) {
 }
 
 /** URL of a generated poster/backdrop; the parameter order is part of the public URL format. */
-function artUrl(addonUrl, kind, tmdbId, { type, tag, rank, lang, logos }) {
+function artUrl(addonUrl, kind, tmdbId, { type, tag, rank, lang, logos, textless = false }, ext = 'jpg') {
     const q = new URLSearchParams({ type, tag, rank: String(rank), lang, logos: logos ? '1' : '0' });
-    return `${addonUrl}/${kind}/${tmdbId}.png?${q}`;
+    if (textless) q.set('textless', '1');
+    if (kind === 'backdrop' || textless) q.set('titleStyle', 'gradient-v9');
+    return `${addonUrl}/${kind}/${tmdbId}.${ext}?${q}`;
 }
 
-function createCatalog({ tmdb, trending, tags, genres, addonUrl }) {
+/** `imageExt` is the format of the artwork URLs handed to Stremio: 'jpg' (default) or 'png'. */
+function createCatalog({ tmdb, trending, tags, genres, addonUrl, imageExt = 'jpg' }) {
     async function getCatalog(type, rawConfig = {}) {
         const cfg = parseUserConfig(rawConfig);
         const tmdbType = type === 'series' ? 'tv' : 'movie';
@@ -80,12 +83,13 @@ function createCatalog({ tmdb, trending, tags, genres, addonUrl }) {
                 rank: cfg.posterRanked ? rank : 'none',
                 lang: cfg.posterLanguage,
                 logos: cfg.posterLogos,
+                textless: cfg.textlessArtwork,
             };
             let portraitPoster = item.poster_path ? `https://image.tmdb.org/t/p/w500${item.poster_path}` : null;
-            if (cfg.posterRanked || cfg.posterTags || cfg.posterLogos || cfg.posterLanguage !== 'en') {
-                portraitPoster = artUrl(addonUrl, 'poster', item.id, posterArt);
+            if (cfg.textlessArtwork || cfg.posterRanked || cfg.posterTags || cfg.posterLogos || cfg.posterLanguage !== 'en') {
+                portraitPoster = artUrl(addonUrl, 'poster', item.id, posterArt, imageExt);
             }
-            const landscapePoster = artUrl(addonUrl, 'backdrop', item.id, posterArt);
+            const landscapePoster = artUrl(addonUrl, 'backdrop', item.id, posterArt, imageExt);
 
             const backdropArt = artUrl(addonUrl, 'backdrop', item.id, {
                 type,
@@ -93,9 +97,9 @@ function createCatalog({ tmdb, trending, tags, genres, addonUrl }) {
                 rank: cfg.backdropRanked ? rank : 'none',
                 lang: cfg.backdropLanguage,
                 logos: cfg.backdropLogos,
-            });
+                textless: cfg.backdropTextlessArtwork,
+            }, imageExt);
             const landscape = cfg.posterShape === 'landscape';
-            const background = backdropArt;
 
             const itemGenres = (item.genre_ids || []).map((g) => genreMap.get(g)).filter(Boolean);
             if (cfg.listLangs.length === 1 && cfg.listLangs[0] === 'non-en' && item.original_language) {
@@ -112,7 +116,7 @@ function createCatalog({ tmdb, trending, tags, genres, addonUrl }) {
                 genres: itemGenres,
                 description: item.overview || '',
                 ...(titleLogo?.file_path ? { logo: `https://image.tmdb.org/t/p/original${titleLogo.file_path}` } : {}),
-                background,
+                background: backdropArt, // backdrop settings apply in portrait and landscape alike
                 poster: landscape ? landscapePoster : portraitPoster,
             };
         });

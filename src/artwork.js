@@ -8,6 +8,12 @@ const FONT_STACK = "'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe 
 const FALLBACK_LANGS = ['en', 'null', 'ja', 'ko', 'es', 'fr', 'de', 'hi', 'it', 'pt', 'ru', 'zh', 'th', 'tr', 'pl', 'nl', 'sv', 'ar'];
 const XMLNS = 'xmlns="http://www.w3.org/2000/svg"';
 
+// Output formats. Artwork is a photo with small overlays, so lossless PNG is ~8-10x larger than an equivalent JPEG.
+// Quality 90 with full-resolution chroma keeps the saturated provider logos and text edges crisp (visually
+// indistinguishable from PNG at 1x); mozjpeg would save ~15% more but doubles encode time.
+const JPEG_OPTIONS = Object.freeze({ quality: 90, chromaSubsampling: '4:4:4' });
+const encode = (image, format) => (format === 'jpg' ? image.flatten({ background: '#000000' }).jpeg(JPEG_OPTIONS) : image.png());
+
 const XML_ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' };
 const escapeXml = (s) => String(s).replace(/[&<>"']/g, (c) => XML_ESCAPES[c]);
 
@@ -41,7 +47,7 @@ const LAYOUTS = {
         placeholder: { width: 1280, height: 720, label: 'No Background Available' },
         tag: { heightRatio: 0.15, fontRatio: 0.75 },
         rank(w, h) {
-            const fontSize = Math.round(h * 0.20);
+            const fontSize = Math.round(h * 0.30);
             const padTop = Math.round(h * 0.05);
             const padLeft = Math.round(w * 0.05);
             return { fontSize, x: padLeft, y: padTop + fontSize / 1.1, shimmerW: w * 0.4, shimmerH: fontSize * 1.5 };
@@ -106,6 +112,134 @@ async function blurRegion(imageBuffer, region) {
 
 // ─── Overlays ────────────────────────────────────────────────────────────────
 
+/** Soft dark alpha halo so transparent logo edges remain readable on bright artwork. */
+async function buildLogoComposites(imageBuffer, left, top, canvasWidth, canvasHeight, { opacity, blur, padding }) {
+    const { data, info } = await sharp(imageBuffer)
+        .ensureAlpha()
+        .extractChannel(3)
+        .raw()
+        .toBuffer({ resolveWithObject: true });
+    const padLeft = Math.min(padding, left);
+    const padTop = Math.min(padding, top);
+    const padRight = Math.min(padding, canvasWidth - left - info.width);
+    const padBottom = Math.min(padding, canvasHeight - top - info.height);
+    const shadowWidth = info.width + padLeft + padRight;
+    const shadowHeight = info.height + padTop + padBottom;
+    const shadow = Buffer.alloc(shadowWidth * shadowHeight * 4);
+    for (let i = 0, j = 0; i < data.length; i++, j += 4) {
+        const x = i % info.width;
+        const y = Math.floor(i / info.width);
+        const shadowIndex = ((y + padTop) * shadowWidth + x + padLeft) * 4;
+        shadow[shadowIndex + 3] = Math.round(data[i] * opacity);
+    }
+    const shadowBuffer = await sharp(shadow, {
+        raw: { width: shadowWidth, height: shadowHeight, channels: 4 },
+    }).blur(blur).png().toBuffer();
+    return [
+        { input: shadowBuffer, top: top - padTop, left: left - padLeft },
+        { input: imageBuffer, top, left },
+    ];
+}
+
+function buildTitleLogoGradient(left, top, logoWidth, logoHeight, canvasWidth, canvasHeight, portrait) {
+    const cx = left + logoWidth / 2;
+    const cy = top + logoHeight / 2;
+    const rx = Math.min(canvasWidth, Math.round(logoWidth * (portrait ? 0.8 : 0.75)));
+    const ry = Math.min(canvasHeight, Math.round(logoHeight * (portrait ? 1.9 : 1.8)));
+    const svg = `<svg ${XMLNS} width="${canvasWidth}" height="${canvasHeight}">
+        <defs><radialGradient id="titleFade">
+            <stop offset="0%" stop-color="#000" stop-opacity="0.38"/>
+            <stop offset="45%" stop-color="#000" stop-opacity="0.25"/>
+            <stop offset="78%" stop-color="#000" stop-opacity="0.08"/>
+            <stop offset="100%" stop-color="#000" stop-opacity="0"/>
+        </radialGradient></defs>
+        <ellipse cx="${cx}" cy="${cy}" rx="${rx}" ry="${ry}" fill="url(#titleFade)"/>
+    </svg>`;
+    return { input: Buffer.from(svg), top: 0, left: 0 };
+}
+
+function buildTitleTextComposite(title, width, height, layout, hasTag) {
+    const portrait = layout === LAYOUTS.poster;
+    const maxFontSize = Math.round(height * (portrait ? 0.095 : 0.14));
+    const maxWidth = Math.round(width * (portrait ? 0.84 : 0.90));
+    const words = String(title).trim().split(/\s+/).filter(Boolean);
+    if (words.length === 0) return null;
+
+    const lines = [];
+    let line = '';
+    for (const word of words) {
+        const candidate = line ? `${line} ${word}` : word;
+        if (line && estimateTextWidth(candidate, maxFontSize) > maxWidth && lines.length === 0) {
+            lines.push(line);
+            line = word;
+        } else {
+            line = candidate;
+        }
+    }
+    lines.push(line);
+    if (lines.length > 2) {
+        lines.splice(1, lines.length - 2, `${lines.slice(1, -1).join(' ')} ${lines.at(-1)}`);
+    }
+
+    const fontSize = Math.max(16, Math.min(
+        maxFontSize,
+        ...lines.map((text) => Math.floor(maxWidth * maxFontSize / estimateTextWidth(text, maxFontSize))),
+    ));
+    const bottomSpace = portrait
+        ? Math.round(height * (hasTag ? layout.tag.heightRatio + 0.04 : 0.07))
+        : Math.round(height * 0.20);
+    const lineHeight = Math.round(fontSize * 1.12);
+    const firstBaseline = height - bottomSpace - ((lines.length - 1) * lineHeight);
+    const textAnchor = portrait ? 'middle' : 'start';
+    const x = portrait ? Math.round(width / 2) : Math.round(width * 0.05);
+    const tspans = lines.map((text, index) =>
+        `<tspan x="${x}" dy="${index === 0 ? 0 : lineHeight}">${escapeXml(text)}</tspan>`).join('');
+    const svg = `<svg ${XMLNS} width="${width}" height="${height}">
+        <defs><filter id="titleTextShadow" x="-20%" y="-30%" width="140%" height="160%">
+            <feGaussianBlur in="SourceAlpha" stdDeviation="3"/>
+            <feOffset dx="2" dy="3" result="offset"/>
+            <feFlood flood-color="#000" flood-opacity="0.9"/>
+            <feComposite in2="offset" operator="in"/>
+            <feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge>
+        </filter></defs>
+        <text y="${firstBaseline}" text-anchor="${textAnchor}" font-family="${FONT_STACK}"
+              font-size="${fontSize}" font-weight="bold" fill="#fff" filter="url(#titleTextShadow)">${tspans}</text>
+    </svg>`;
+    return { input: Buffer.from(svg), top: 0, left: 0 };
+}
+
+const LINEAR_RGB = Array.from({ length: 256 }, (_, value) => {
+    const channel = value / 255;
+    return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+});
+const pixelLuminance = (data, offset) =>
+    (0.2126 * LINEAR_RGB[data[offset]]) +
+    (0.7152 * LINEAR_RGB[data[offset + 1]]) +
+    (0.0722 * LINEAR_RGB[data[offset + 2]]);
+
+async function titleLogoContrast(imageBuffer, logoBuffer, left, top) {
+    const logo = await sharp(logoBuffer).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+    const background = await sharp(imageBuffer)
+        .extract({ left, top, width: logo.info.width, height: logo.info.height })
+        .ensureAlpha()
+        .raw()
+        .toBuffer({ resolveWithObject: true });
+    let logoLuminance = 0;
+    let backgroundLuminance = 0;
+    let totalAlpha = 0;
+    for (let i = 0; i < logo.data.length; i += 4) {
+        const alpha = logo.data[i + 3] / 255;
+        if (alpha === 0) continue;
+        logoLuminance += pixelLuminance(logo.data, i) * alpha;
+        backgroundLuminance += pixelLuminance(background.data, i) * alpha;
+        totalAlpha += alpha;
+    }
+    if (totalAlpha === 0) return Infinity;
+    const logoMean = logoLuminance / totalAlpha;
+    const backgroundMean = backgroundLuminance / totalAlpha;
+    return (Math.max(logoMean, backgroundMean) + 0.05) / (Math.min(logoMean, backgroundMean) + 0.05);
+}
+
 /** Frosted-glass pill along the bottom edge, containing `tagText`. Returns sharp composite operations. */
 async function buildTagComposites(imageBuffer, metadata, tagText, heightRatio, fontRatio) {
     const { width, height } = metadata;
@@ -169,8 +303,8 @@ function buildRankComposite(layout, rankText, width, height) {
         <defs>
             <linearGradient id="rankGradient" x1="0%" y1="0%" x2="100%" y2="100%">
                 <stop offset="0%"   style="stop-color:#ffffff;stop-opacity:1"/>
-                <stop offset="60%"  style="stop-color:#c0c0c0;stop-opacity:1"/>
-                <stop offset="100%" style="stop-color:#808080;stop-opacity:1"/>
+                <stop offset="60%"  style="stop-color:#dedede;stop-opacity:1"/>
+                <stop offset="100%" style="stop-color:#a8a8a8;stop-opacity:1"/>
             </linearGradient>
             <filter id="rankShadow" x="-10%" y="-10%" width="120%" height="120%">
                 <feGaussianBlur in="SourceAlpha" stdDeviation="3"/>
@@ -180,15 +314,15 @@ function buildRankComposite(layout, rankText, width, height) {
                 <feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge>
             </filter>
             <radialGradient id="shimmerGradient" cx="0%" cy="0%" r="100%" fx="0%" fy="0%">
-                <stop offset="0%"   style="stop-color:black;stop-opacity:0.6"/>
-                <stop offset="40%"  style="stop-color:black;stop-opacity:0.3"/>
+                <stop offset="0%"   style="stop-color:black;stop-opacity:0.75"/>
+                <stop offset="40%"  style="stop-color:black;stop-opacity:0.45"/>
                 <stop offset="100%" style="stop-color:black;stop-opacity:0"/>
             </radialGradient>
         </defs>
         <rect x="0" y="0" width="${g.shimmerW}" height="${g.shimmerH}" fill="url(#shimmerGradient)"/>
         <text x="${g.x}" y="${g.y}" text-anchor="start"
               font-family="${FONT_STACK}" font-size="${g.fontSize}"
-              fill="url(#rankGradient)" fill-opacity="0.80" font-weight="bold"
+              fill="url(#rankGradient)" fill-opacity="0.75" font-weight="bold"
               filter="url(#rankShadow)">${escapeXml(rankText)}</text>
     </svg>`;
     return { input: Buffer.from(svg), top: 0, left: 0 };
@@ -210,25 +344,37 @@ async function buildProviderLogo(tmdb, info, layout, width, height, logger) {
             </svg>`);
             resized = await sharp(resized).composite([{ input: mask, blend: 'dest-in' }]).png().toBuffer();
         }
-        return { input: resized, top, left: Math.round(width - meta.width - rightPad) };
+        return [{ input: resized, top, left: Math.round(width - meta.width - rightPad) }];
     } catch (err) {
         logger.error('Provider logo error:', err.message);
         return null;
     }
 }
 
-/** Title logo, bottom-left (backdrops with a textless background only). */
-async function buildTitleLogo(tmdb, logo, width, height, logger) {
+/** Title logo near the bottom; portrait artwork centers it above the reserved tag area. */
+async function buildTitleLogo(tmdb, logo, imageBuffer, width, height, layout, hasTag, logger) {
     try {
         const buf = await tmdb.image('original', logo.file_path);
-        let resized = await sharp(buf)
-            .resize({ width: Math.round(width * 0.50), height: Math.round(height * 0.50), fit: 'inside' })
+        const portrait = layout === LAYOUTS.poster;
+        let source = sharp(buf);
+        if (portrait) {
+            source = source.trim({ background: { r: 0, g: 0, b: 0, alpha: 0 }, threshold: 8 });
+        }
+        let resized = await source
+            .resize({
+                width: Math.round(width * (portrait ? 0.84 : 0.50)),
+                height: Math.round(height * (portrait ? 0.25 : 0.40)),
+                fit: 'inside',
+            })
             .png()
             .toBuffer();
         const meta = await sharp(resized).metadata();
 
-        const targetLeft = Math.round(width * 0.05);
-        const targetTop = height - meta.height - Math.round(height * 0.20);
+        const targetLeft = portrait ? Math.round((width - meta.width) / 2) : Math.round(width * 0.05);
+        const bottomSpace = portrait
+            ? Math.round(height * (hasTag ? layout.tag.heightRatio + 0.04 : 0.07))
+            : Math.round(height * 0.20);
+        const targetTop = height - meta.height - bottomSpace;
 
         // sharp refuses overlays that extend past the base image, so crop whatever would overhang
         const cropLeft = Math.max(0, -targetLeft);
@@ -241,7 +387,17 @@ async function buildTitleLogo(tmdb, logo, width, height, logger) {
                 .extract({ left: cropLeft, top: cropTop, width: cropWidth, height: cropHeight })
                 .toBuffer();
         }
-        return { input: resized, left: targetLeft + cropLeft, top: targetTop + cropTop };
+        const shadow = portrait
+            ? { opacity: 0.7, blur: 5, padding: 16 }
+            : { opacity: 0.9, blur: 10, padding: 30 };
+        const logoLeft = targetLeft + cropLeft;
+        const logoTop = targetTop + cropTop;
+        const shadowComposites = await buildLogoComposites(resized, logoLeft, logoTop, width, height, shadow);
+        const contrast = await titleLogoContrast(imageBuffer, resized, logoLeft, logoTop);
+        const gradient = contrast < 3
+            ? [buildTitleLogoGradient(logoLeft, logoTop, cropWidth, cropHeight, width, height, portrait)]
+            : [];
+        return [...gradient, ...shadowComposites];
     } catch (err) {
         logger.error('Title logo error:', err.message);
         return null;
@@ -269,25 +425,27 @@ function createArtwork({ tmdb, concurrency = 4, logger = console }) {
     const placeholders = new Map();
 
     /** Locally generated stand-in for titles with no image (no dependency on an external placeholder service). */
-    function placeholder(kind) {
-        if (!placeholders.has(kind)) {
+    function placeholder(kind, format) {
+        const memo = `${kind}|${format}`;
+        if (!placeholders.has(memo)) {
             const { width, height, label } = LAYOUTS[kind].placeholder;
             const svg = `<svg ${XMLNS} width="${width}" height="${height}">
                 <rect width="100%" height="100%" fill="#1e1e1e"/>
                 <text x="50%" y="50%" text-anchor="middle" fill="#8a8a8a" font-family="${FONT_STACK}" font-size="${Math.round(height * 0.04)}">${escapeXml(label)}</text>
             </svg>`;
-            placeholders.set(kind, sharp(Buffer.from(svg)).png().toBuffer());
+            placeholders.set(memo, encode(sharp(Buffer.from(svg)), format).toBuffer());
         }
-        return placeholders.get(kind);
+        return placeholders.get(memo);
     }
 
     /**
-     * @param {{kind:'poster'|'backdrop', id:string, type:'movie'|'series', tag:string, rank:string, lang:string, logos:boolean}} params
-     *        (already validated by the caller)
+     * @param {{kind:'poster'|'backdrop', id:string, type:'movie'|'series', tag:string, rank:string, lang:string, logos:boolean, textless?:boolean, format?:'png'|'jpg'}} params
+     *        (already validated by the caller; format defaults to png)
      * @returns {Promise<{kind:'image', buffer:Buffer} | {kind:'redirect', url:string} | {kind:'placeholder', buffer:Buffer}>}
      */
     async function render(params) {
         const layout = LAYOUTS[params.kind];
+        const format = params.format === 'jpg' ? 'jpg' : 'png';
         const tmdbType = params.type === 'series' ? 'tv' : 'movie';
         const tagText = tagLabel(params.tag);
         const rankText = params.rank !== 'none' ? params.rank : null;
@@ -306,40 +464,71 @@ function createArtwork({ tmdb, concurrency = 4, logger = console }) {
 
         const candidates = (images[layout.imageList] || []).filter((im) => allowed.has(im.iso_639_1));
         const wanted = params.lang === 'null' ? null : params.lang;
-        const image = pickByLanguage(candidates, [wanted, originalLang, null, ...(layout.preferEnglish ? ['en'] : [])])
+        const standardImage = pickByLanguage(candidates, [wanted, originalLang, null, ...(layout.preferEnglish ? ['en'] : [])])
             || candidates[0];
-        if (!image?.file_path) return { kind: 'placeholder', buffer: await placeholder(params.kind) };
+        let image = standardImage;
+        let fallbackBackdrop = false;
+        if (params.textless) {
+            if (params.kind === 'poster') {
+                image = (images.posters || []).find((candidate) => candidate.iso_639_1 === null && candidate.file_path);
+                if (!image) {
+                    image = (images.backdrops || []).find((candidate) => candidate.iso_639_1 === null && candidate.file_path);
+                    fallbackBackdrop = Boolean(image);
+                }
+            } else {
+                image = (images.backdrops || []).find((candidate) => candidate.iso_639_1 === null && candidate.file_path);
+            }
+            image ||= standardImage;
+        }
+        if (!image?.file_path) return { kind: 'placeholder', buffer: await placeholder(params.kind, format) };
 
-        // A title logo goes on textless backdrops only
+        // In textless mode, title logos also replace text on posters.
+        const titleExpected = (params.textless || layout.titleLogo && params.lang !== 'null')
+            && image.iso_639_1 === null;
         let titleLogo = null;
-        if (layout.titleLogo && params.lang !== 'null' && image.iso_639_1 === null && images.logos?.length) {
+        if (titleExpected && images.logos?.length) {
             titleLogo = pickByLanguage(images.logos, [params.lang, originalLang, 'en']) || images.logos[0];
         }
+        const titleText = titleExpected ? details.title || details.name : null;
         const providerInfo = params.logos
             ? resolveProviderLogoInfo(tmdbType, { ...details, 'watch/providers': providers })
             : null;
 
-        const passthrough = { kind: 'redirect', url: tmdb.imageUrl(layout.size, image.file_path) };
-        if (!tagText && !rankText && !providerInfo && !titleLogo) return passthrough; // nothing to draw
+        const sourceSize = fallbackBackdrop ? LAYOUTS.backdrop.size : layout.size;
+        const passthrough = { kind: 'redirect', url: tmdb.imageUrl(sourceSize, image.file_path) };
+        if (!fallbackBackdrop && !tagText && !rankText && !providerInfo && !titleLogo && !titleText) return passthrough; // nothing to draw
 
-        const base = await tmdb.image(layout.size, image.file_path);
+        let base = await tmdb.image(sourceSize, image.file_path);
+        if (fallbackBackdrop) {
+            base = await sharp(base)
+                .resize({
+                    width: layout.placeholder.width,
+                    height: layout.placeholder.height,
+                    fit: 'cover',
+                    position: 'centre',
+                })
+                .toBuffer();
+        }
 
         const buffer = await limit(async () => {
             const { width, height } = await sharp(base).metadata();
             const meta = { width, height };
-            const [tagOps, providerOp, titleOp] = await Promise.all([
+            const [tagOps, providerOps, titleOps] = await Promise.all([
                 tagText ? buildTagComposites(base, meta, tagText, layout.tag.heightRatio, layout.tag.fontRatio) : [],
                 providerInfo ? buildProviderLogo(tmdb, providerInfo, layout, width, height, logger) : null,
-                titleLogo ? buildTitleLogo(tmdb, titleLogo, width, height, logger) : null,
+                titleLogo ? buildTitleLogo(tmdb, titleLogo, base, width, height, layout, Boolean(tagText), logger) : null,
             ]);
             const ops = [
+                ...(providerOps || []),
+                ...(titleOps || []),
+                titleText && !titleOps?.length
+                    ? buildTitleTextComposite(titleText, width, height, layout, Boolean(tagText))
+                    : null,
                 rankText ? buildRankComposite(layout, rankText, width, height) : null,
                 ...tagOps,
-                titleOp,
-                providerOp,
             ].filter(Boolean);
-            if (ops.length === 0) return null; // e.g. only a logo was requested and it failed to load
-            return sharp(base).composite(ops).png().toBuffer();
+            if (ops.length === 0) return fallbackBackdrop ? encode(sharp(base), format).toBuffer() : null;
+            return encode(sharp(base).composite(ops), format).toBuffer();
         });
 
         return buffer ? { kind: 'image', buffer } : passthrough;

@@ -24,7 +24,7 @@ function createApp(env, deps = {}) {
     const genres = createGenres(tmdb, { logger });
     const trending = createTrending({ tmdb, now: deps.now });
     const tags = createTagResolver({ tmdb, now: deps.now, logger });
-    const catalog = createCatalog({ tmdb, trending, tags, genres, addonUrl: env.addonUrl });
+    const catalog = createCatalog({ tmdb, trending, tags, genres, addonUrl: env.addonUrl, imageExt: env.imageFormat || 'jpg' });
     const artwork = createArtwork({ tmdb, concurrency: env.renderConcurrency, logger });
     const store = new ImageStore({ dir: env.cacheDir, logger });
 
@@ -36,7 +36,8 @@ function createApp(env, deps = {}) {
 
     const configHtml = fs
         .readFileSync(path.join(__dirname, '..', 'public', 'configure.html'), 'utf8')
-        .replaceAll('{{FAVICON_URL}}', `${env.addonUrl}/favicon.svg`);
+        .replaceAll('{{FAVICON_URL}}', `${env.addonUrl}/favicon.svg`)
+        .replaceAll('{{IMAGE_EXT}}', env.imageFormat || 'jpg');
 
     const app = express();
     app.disable('x-powered-by');

@@ -23,19 +23,37 @@ function parseImageQuery(query = {}) {
         rank: parseRank(query.rank),
         lang: parseLang(query.lang),
         logos: query.logos === '1',
+        textless: query.textless === '1',
+        titleStyle: query.titleStyle === 'gradient-v9' ? 'gradient-v9' : undefined,
     };
 }
 
+/** URL extension -> format. `.png` URLs keep returning PNG, so existing installs and saved patterns are unaffected. */
+const IMAGE_TYPES = Object.freeze({ png: 'image/png', jpg: 'image/jpeg' });
+const ARTWORK_CACHE_VERSION = 'title-text-fallback-v5';
+
 /** Cache / single-flight key: built from validated values only, so junk query params can't multiply cache entries. */
-const imageKey = (kind, id, p) => [kind, p.type, id, p.tag, p.rank, p.lang, p.logos ? 1 : 0].join('|');
+const imageKey = (kind, id, p) => [
+    ARTWORK_CACHE_VERSION,
+    kind,
+    p.format,
+    p.type,
+    id,
+    p.tag,
+    p.rank,
+    p.lang,
+    p.logos ? 1 : 0,
+    p.textless ? 1 : 0,
+    p.titleStyle || '',
+].join('|');
 
 // ─── Express helpers ─────────────────────────────────────────────────────────
 
 /** Express 4 doesn't catch rejected promises from async handlers; this forwards them to the error middleware. */
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
-function sendPng(res, buffer) {
-    res.set({ 'Content-Type': 'image/png', 'Cache-Control': 'public, max-age=86400' });
+function sendImage(res, buffer, format, maxAge = 86400) {
+    res.set({ 'Content-Type': IMAGE_TYPES[format], 'Cache-Control': `public, max-age=${maxAge}` });
     res.send(buffer);
 }
 
@@ -54,4 +72,4 @@ function errorHandler(logger = console) {
     };
 }
 
-module.exports = { parseId, parseType, parseRank, parseLang, parseImageQuery, imageKey, wrap, sendPng, errorHandler };
+module.exports = { IMAGE_TYPES, parseId, parseType, parseRank, parseLang, parseImageQuery, imageKey, wrap, sendImage, errorHandler };

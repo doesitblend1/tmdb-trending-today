@@ -2,26 +2,27 @@
 const { createSingleFlight } = require('../util');
 const { parseListLang } = require('../userConfig');
 const { normalizeTag } = require('../tags');
-const { parseId, parseType, parseLang, parseImageQuery, imageKey, wrap, sendPng } = require('../http');
+const { IMAGE_TYPES, parseId, parseType, parseLang, parseImageQuery, imageKey, wrap, sendImage } = require('../http');
 
 function registerImageRoutes(app, { store, artwork, trending, tags, logger = console }) {
     // Concurrent requests for the same image share one render
     const flights = createSingleFlight();
 
-    // ── /poster/:id.png and /backdrop/:id.png ───────────────────────────────
-    const serveArtwork = (kind) => wrap(async (req, res) => {
+    // ── /poster/:id.(png|jpg) and /backdrop/:id.(png|jpg) ───────────────────
+    // The extension picks the format. Old `.png` URLs keep returning PNG; new URLs are `.jpg` (much smaller).
+    const serveArtwork = (kind, format) => wrap(async (req, res) => {
         const id = parseId(req.params.id);
         if (!id) return res.status(400).type('text').send('Invalid id');
 
-        const params = { kind, id, ...parseImageQuery(req.query) };
+        const params = { kind, id, format, ...parseImageQuery(req.query) };
         const key = imageKey(kind, id, params);
 
-        const cached = await store.get(key);
-        if (cached) return sendPng(res, cached);
+        const cached = await store.get(key, format);
+        if (cached) return sendImage(res, cached, format);
 
         const result = await flights.run(key, async () => {
             const rendered = await artwork.render(params);
-            if (rendered.kind === 'image') store.set(key, rendered.buffer); // fire-and-forget; set() never rejects
+            if (rendered.kind === 'image') store.set(key, rendered.buffer, format); // fire-and-forget; set() never rejects
             return rendered;
         });
 
@@ -30,15 +31,16 @@ function registerImageRoutes(app, { store, artwork, trending, tags, logger = con
                 res.set('Cache-Control', 'public, max-age=86400');
                 return res.redirect(302, result.url);
             case 'placeholder': // no image on TMDB (yet): short cache so a later upload gets picked up
-                res.set({ 'Content-Type': 'image/png', 'Cache-Control': 'public, max-age=3600' });
-                return res.send(result.buffer);
+                return sendImage(res, result.buffer, format, 3600);
             default:
-                return sendPng(res, result.buffer);
+                return sendImage(res, result.buffer, format);
         }
     });
 
-    app.get('/poster/:id.png', serveArtwork('poster'));
-    app.get('/backdrop/:id.png', serveArtwork('backdrop'));
+    for (const format of Object.keys(IMAGE_TYPES)) {
+        app.get(`/poster/:id.${format}`, serveArtwork('poster', format));
+        app.get(`/backdrop/:id.${format}`, serveArtwork('backdrop', format));
+    }
 
     // ── Old URL shapes still found in existing installs ─────────────────────
     for (const [prefix, target] of [['proxy-image-backdrop', 'backdrop'], ['proxy-image-poster', 'poster']]) {
@@ -49,9 +51,9 @@ function registerImageRoutes(app, { store, artwork, trending, tags, logger = con
         });
     }
 
-    // ── /image/:type/:id.png and /landscape/:type/:id.png (AIOMetadata URL patterns) ─────────
-    // The tag and rank are worked out here, then the client is sent to the real image URL.
-    const redirectPattern = (target) => wrap(async (req, res) => {
+    // ── /image/:type/:id.(png|jpg) and /landscape/:type/:id.(png|jpg) (AIOMetadata URL patterns) ─────────
+    // The tag and rank are worked out here, then the client is sent to the real image URL (same extension).
+    const redirectPattern = (target, format) => wrap(async (req, res) => {
         const id = parseId(req.params.id);
         if (!id) return res.status(400).type('text').send('Invalid id');
 
@@ -74,12 +76,16 @@ function registerImageRoutes(app, { store, artwork, trending, tags, logger = con
         }
 
         const query = new URLSearchParams({ type, tag, rank, lang: parseLang(q.lang), logos: q.logos === '1' ? '1' : '0' });
+        if (q.textless === '1') query.set('textless', '1');
+        if (target === 'backdrop' || q.textless === '1') query.set('titleStyle', 'gradient-v9');
         res.set('Cache-Control', 'public, max-age=300'); // tags change by the day, not the minute
-        res.redirect(302, `/${target}/${id}.png?${query}`);
+        res.redirect(302, `/${target}/${id}.${format}?${query}`);
     });
 
-    app.get('/image/:type/:id.png', redirectPattern('poster'));
-    app.get('/landscape/:type/:id.png', redirectPattern('backdrop'));
+    for (const format of Object.keys(IMAGE_TYPES)) {
+        app.get(`/image/:type/:id.${format}`, redirectPattern('poster', format));
+        app.get(`/landscape/:type/:id.${format}`, redirectPattern('backdrop', format));
+    }
 }
 
 module.exports = { registerImageRoutes };

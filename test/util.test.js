@@ -104,7 +104,8 @@ test('parseUserConfig', async (t) => {
         assert.deepEqual(parseUserConfig({}), {
             backdropTags: true, backdropLogos: false, backdropRanked: false, backdropLanguage: 'en',
             posterTags: true, posterLogos: false, posterRanked: true, posterLanguage: 'en',
-            posterShape: 'portrait', digitalOnly: true, listLangs: ['en'], listLang: 'en',
+            textlessArtwork: false, backdropTextlessArtwork: false, posterShape: 'portrait',
+            digitalOnly: true, listLangs: ['en'], listLang: 'en',
         });
     });
 
@@ -119,6 +120,10 @@ test('parseUserConfig', async (t) => {
         assert.equal(parseUserConfig({ posterLang: 'ja' }).posterLanguage, 'ja');
         assert.equal(parseUserConfig({ landscapePosterLang: 'ko', posterLang: 'ja' }).backdropLanguage, 'ko');
         assert.equal(parseUserConfig({ portraitPosterLang: 'fr', posterLang: 'ja' }).posterLanguage, 'fr');
+        assert.equal(parseUserConfig({ textlessArtwork: 'true' }).textlessArtwork, true);
+        assert.equal(parseUserConfig({ textlessArtwork: 'invalid' }).textlessArtwork, false);
+        assert.equal(parseUserConfig({ backdropTextlessArtwork: 'true' }).backdropTextlessArtwork, true);
+        assert.equal(parseUserConfig({ backdropTextlessArtwork: 'invalid' }).backdropTextlessArtwork, false);
     });
 
     await t.test('bad values fall back safely', () => {

@@ -24,8 +24,8 @@ class ImageStore {
         this.dirReady = null;
     }
 
-    fileFor(key) {
-        return path.join(this.dir, `${crypto.createHash('sha256').update(key).digest('hex')}.png`);
+    fileFor(key, ext = 'png') {
+        return path.join(this.dir, `${crypto.createHash('sha256').update(key).digest('hex')}.${ext}`);
     }
 
     ensureDir() {
@@ -33,12 +33,12 @@ class ImageStore {
         return this.dirReady;
     }
 
-    /** @returns {Promise<Buffer|null>} */
-    async get(key) {
+    /** @returns {Promise<Buffer|null>} `ext` is the file extension on disk ('png' or 'jpg'); the key should already encode the format. */
+    async get(key, ext = 'png') {
         const hit = this.memory.get(key);
         if (hit) return hit;
         try {
-            const file = this.fileFor(key);
+            const file = this.fileFor(key, ext);
             const stat = await fsp.stat(file);
             if (this.now() - stat.mtimeMs > this.ttlMs) return null;
             const buffer = await fsp.readFile(file);
@@ -50,9 +50,9 @@ class ImageStore {
     }
 
     /** Never rejects: a failing disk must not fail the request that already has its image. */
-    async set(key, buffer) {
+    async set(key, buffer, ext = 'png') {
         this.memory.set(key, buffer);
-        const file = this.fileFor(key);
+        const file = this.fileFor(key, ext);
         const tmp = `${file}.${process.pid}.${crypto.randomBytes(4).toString('hex')}.tmp`;
         try {
             await this.ensureDir();
@@ -71,7 +71,7 @@ class ImageStore {
 
         const files = [];
         for (const name of names) {
-            if (!name.endsWith('.png') && !name.endsWith('.tmp')) continue; // only touch our own files
+            if (!/\.(png|jpg|tmp)$/.test(name)) continue; // only touch our own files
             const file = path.join(this.dir, name);
             try {
                 const stat = await fsp.stat(file);

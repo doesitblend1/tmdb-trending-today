@@ -7,7 +7,7 @@ const path = require('path');
 const sharp = require('sharp');
 
 const { ImageStore } = require('../src/imageStore');
-const { createArtwork } = require('../src/artwork');
+const { createArtwork, LAYOUTS } = require('../src/artwork');
 const { createTmdbClient } = require('../src/tmdb');
 const { createApp } = require('../src/app');
 const { express, addonBuilder } = require('./helpers/miniExpress');
@@ -16,6 +16,7 @@ const { NOW, iso, makeMovie, makeShow, standardImages, createFakeTmdb } = requir
 const silent = { warn() {}, error() {}, log() {} };
 const tmpDir = () => fs.mkdtempSync(path.join(os.tmpdir(), 'tmdb-top-'));
 const png = (buf) => sharp(buf).metadata();
+const isJpeg = (buf) => Buffer.isBuffer(buf) && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff;
 const isPng = (buf) => Buffer.isBuffer(buf) && buf.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
 
 // ─── ImageStore ──────────────────────────────────────────────────────────────
@@ -38,6 +39,18 @@ test('ImageStore: round trip through disk, TTL, atomic writes', async (t) => {
     // expired on disk: ignored
     const c = new ImageStore({ dir, ttlMs: 1000, now: () => Date.now() + 5000, logger: silent });
     assert.equal(await c.get('k1'), null);
+});
+
+test('ImageStore: jpg files round-trip and are swept like png files', async (t) => {
+    const dir = tmpDir();
+    t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+    const store = new ImageStore({ dir, ttlMs: 1000, logger: silent });
+    await store.set('poster|jpg|k', Buffer.from('jpeg-bytes'), 'jpg');
+    assert.ok(fs.readdirSync(dir).some((f) => f.endsWith('.jpg')));
+    assert.equal((await new ImageStore({ dir, logger: silent }).get('poster|jpg|k', 'jpg')).toString(), 'jpeg-bytes');
+    const later = new ImageStore({ dir, ttlMs: 1000, now: () => Date.now() + 5000, logger: silent });
+    assert.equal(await later.sweep(), 1);
+    assert.deepEqual(fs.readdirSync(dir), []);
 });
 
 test('ImageStore: concurrent writers of one key never expose a partial file', async (t) => {
@@ -99,6 +112,10 @@ test('artwork: poster with tag + rank + provider logo', async () => {
     assert.deepEqual([meta.width, meta.height], [500, 750]);
 });
 
+test('artwork: landscape rank font is 30% of backdrop height', () => {
+    assert.equal(LAYOUTS.backdrop.rank(1280, 720).fontSize, 216);
+});
+
 test('artwork: backdrop with textless art gets a title logo, provider logo, tag and rank', async () => {
     // Only a textless backdrop exists, so the requested language can't be satisfied and the title logo is drawn on top
     const images = { ...standardImages(1), backdrops: [{ iso_639_1: null, file_path: '/bd_null_1.jpg' }] };
@@ -115,6 +132,124 @@ test('artwork: backdrop with textless art gets a title logo, provider logo, tag 
     const withText = await plain.render({ ...base, kind: 'backdrop', tag: 'now_streaming', lang: 'en' });
     assert.equal(withText.kind, 'image');
     assert.equal(plainFake.count('/t/p/original/logo_'), 0);
+});
+
+test('artwork: textless mode uses textless posters and overlays the title logo', async () => {
+    const poster = await sharp({ create: { width: 500, height: 750, channels: 3, background: '#446688' } }).jpeg().toBuffer();
+    const { artwork, fake } = artworkFor({
+        movies: [makeMovie(1)],
+        cdnImages: { '/t/p/w500/poster_null_1.jpg': poster },
+    });
+    const out = await artwork.render({ ...base, textless: true, tag: 'now_streaming' });
+    assert.equal(out.kind, 'image');
+    assert.deepEqual([(await png(out.buffer)).width, (await png(out.buffer)).height], [500, 750]);
+    assert.equal(fake.count('/t/p/w500/poster_null_1.jpg'), 1);
+    assert.equal(fake.count('/t/p/original/logo_en_1.png'), 1);
+    const { data, info } = await sharp(out.buffer).raw().toBuffer({ resolveWithObject: true });
+    const pixel = (480 * info.width + 250) * info.channels;
+    const sourcePixel = (480 * 500 + 250) * 3;
+    const source = await sharp(poster).raw().toBuffer();
+    assert.deepEqual(Array.from(data.subarray(pixel, pixel + 3)), Array.from(source.subarray(sourcePixel, sourcePixel + 3)), 'high-contrast artwork is left untouched');
+});
+
+test('artwork: low-contrast title logo gets a radial halo with streaming logos both off and on', async () => {
+    const poster = await sharp({ create: { width: 500, height: 750, channels: 3, background: '#eeeeee' } }).jpeg().toBuffer();
+    const { artwork } = artworkFor({
+        movies: [makeMovie(1, { providers: netflix })],
+        cdnImages: { '/t/p/w500/poster_null_1.jpg': poster },
+    });
+    const render = async (logos) => {
+        const out = await artwork.render({ ...base, textless: true, logos });
+        assert.equal(out.kind, 'image');
+        const { data, info } = await sharp(out.buffer).raw().toBuffer({ resolveWithObject: true });
+        const offset = (480 * info.width + 250) * info.channels;
+        return Array.from(data.subarray(offset, offset + 3));
+    };
+    const withoutProviderLogo = await render(false);
+    const withProviderLogo = await render(true);
+    assert.deepEqual(withProviderLogo, withoutProviderLogo);
+    const source = await sharp(poster).raw().toBuffer();
+    const pixel = (480 * 500 + 250) * 3;
+    assert.ok(withProviderLogo[0] < source[pixel] - 20, 'radial halo darkens nearby artwork when logo contrast is low');
+});
+
+test('artwork: textless landscape mode uses the textless backdrop and title logo', async () => {
+    const { artwork, fake } = artworkFor({ movies: [makeMovie(1)] });
+    const out = await artwork.render({ ...base, kind: 'backdrop', textless: true });
+    assert.equal(out.kind, 'image');
+    assert.deepEqual([(await png(out.buffer)).width, (await png(out.buffer)).height], [1280, 720]);
+    assert.equal(fake.count('/t/p/w1280/bd_null_1.jpg'), 1);
+    assert.equal(fake.count('/t/p/original/logo_en_1.png'), 1);
+});
+
+test('artwork: textless portrait falls back to a centered, portrait-cropped textless backdrop', async () => {
+    const images = {
+        posters: [{ iso_639_1: 'en', file_path: '/poster_en_1.jpg' }],
+        backdrops: [{ iso_639_1: null, file_path: '/bd_null_1.jpg' }],
+        logos: [],
+    };
+    const { artwork, fake } = artworkFor({ movies: [makeMovie(1, { images })] });
+    const out = await artwork.render({ ...base, textless: true, tag: 'none', rank: 'none' });
+    assert.equal(out.kind, 'image');
+    assert.deepEqual([(await png(out.buffer)).width, (await png(out.buffer)).height], [500, 750]);
+    assert.equal(fake.count('/t/p/w1280/bd_null_1.jpg'), 1);
+});
+
+test('artwork: textless art without a title logo gets the regular title text', async () => {
+    const images = { ...standardImages(1), logos: [] };
+    const poster = await sharp({ create: { width: 500, height: 750, channels: 3, background: '#446688' } }).jpeg().toBuffer();
+    const backdrop = await sharp({ create: { width: 1280, height: 720, channels: 3, background: '#446688' } }).jpeg().toBuffer();
+    const { artwork, fake } = artworkFor({
+        movies: [makeMovie(1, { images })],
+        cdnImages: {
+            '/t/p/w500/poster_null_1.jpg': poster,
+            '/t/p/w1280/bd_null_1.jpg': backdrop,
+        },
+    });
+
+    for (const [kind, imageBuffer] of [['poster', poster], ['backdrop', backdrop]]) {
+        const out = await artwork.render({ ...base, kind, textless: true });
+        assert.equal(out.kind, 'image');
+        const { data, info } = await sharp(out.buffer).raw().toBuffer({ resolveWithObject: true });
+        const source = await sharp(imageBuffer).raw().toBuffer();
+        const top = Math.floor(info.height * 0.68);
+        let hasTitleText = false;
+        let titleTop = info.height;
+        let titleBottom = -1;
+        for (let y = top; y < info.height; y++) {
+            for (let x = 0; x < info.width; x++) {
+                const offset = (y * info.width + x) * info.channels;
+                const sourceOffset = (y * info.width + x) * 3;
+                if (data[offset] > 220 && data[offset + 1] > 220 && data[offset + 2] > 220 &&
+                    source[sourceOffset] < 120 && source[sourceOffset + 1] < 150 && source[sourceOffset + 2] < 180) {
+                    hasTitleText = true;
+                    titleTop = Math.min(titleTop, y);
+                    titleBottom = Math.max(titleBottom, y);
+                }
+            }
+        }
+        assert.ok(hasTitleText, `${kind} textless artwork should include readable title text`);
+        assert.ok(titleBottom - titleTop > (kind === 'poster' ? 40 : 55), `${kind} fallback title uses the larger font size`);
+    }
+    assert.equal(fake.count('/t/p/original/logo_en_1.png'), 0);
+});
+
+test('artwork: format=jpg produces a JPEG of the same size, png stays the default', async () => {
+    const { artwork } = artworkFor({ movies: [makeMovie(1, { providers: netflix })] });
+    const args = { ...base, tag: 'coming_date_Oct_2', rank: '3', logos: true };
+    const png = await artwork.render(args);
+    const jpg = await artwork.render({ ...args, format: 'jpg' });
+    assert.ok(isPng(png.buffer) && isJpeg(jpg.buffer));
+    const meta = await sharp(jpg.buffer).metadata();
+    assert.deepEqual([meta.format, meta.width, meta.height], ['jpeg', 500, 750]);
+    assert.ok(jpg.buffer.length < png.buffer.length, 'jpeg should be smaller');
+
+    const bd = await artwork.render({ ...args, kind: 'backdrop', format: 'jpg' });
+    assert.deepEqual([(await sharp(bd.buffer).metadata()).format, (await sharp(bd.buffer).metadata()).width], ['jpeg', 1280]);
+
+    const holder = artworkFor({ movies: [makeMovie(1, { images: { posters: [], backdrops: [], logos: [] } })] }).artwork;
+    assert.ok(isJpeg((await holder.render({ ...base, format: 'jpg' })).buffer)); // placeholder honours the format too
+    assert.ok(isPng((await holder.render(base)).buffer));
 });
 
 test('artwork: a failing logo download does not fail the image', async () => {
@@ -165,7 +300,7 @@ function appFor(fixtures) {
     const fake = createFakeTmdb(fixtures);
     const tmdb = createTmdbClient({ apiKey: 'k', fetchImpl: fake.fetch, sleep: async () => {}, retries: 0, logger: silent });
     const dir = tmpDir();
-    const env = { tmdbApiKey: 'k', addonUrl: 'https://addon.test', port: 0, cacheDir: dir, renderConcurrency: 2 };
+    const env = { tmdbApiKey: 'k', addonUrl: 'https://addon.test', port: 0, cacheDir: dir, renderConcurrency: 2, imageFormat: 'jpg' };
     const { app, shutdown } = createApp(env, { express, sdk: { addonBuilder }, tmdb, now: () => NOW, logger: silent });
     return { app, fake, cleanup: () => { shutdown(); fs.rmSync(dir, { recursive: true, force: true }); } };
 }
@@ -188,7 +323,11 @@ test('HTTP: addon routes', async (t) => {
             const res = await app.request(url);
             assert.equal(res.status, 200);
             assert.match(res.body, /href="https:\/\/addon\.test\/favicon\.svg"/);
-            assert.doesNotMatch(res.body, /\{\{FAVICON_URL\}\}/);
+            assert.doesNotMatch(res.body, /\{\{[A-Z_]+\}\}/); // every placeholder filled in
+            assert.match(res.body, /\/image\/\{type\}\/\{tmdb_id\}\.jpg"/);
+            assert.match(res.body, /\/landscape\/\{type\}\/\{tmdb_id\}\.jpg"/);
+            assert.match(res.body, /textlessArtwork/);
+            assert.match(res.body, /backdropTextlessArtwork/);
             assert.equal(res.headers['cache-control'], 'no-store');
         }
     });
@@ -260,11 +399,53 @@ test('HTTP: image routes', async (t) => {
         assert.equal(sanitized.headers.location, 'https://image.tmdb.org/t/p/w500/poster_en_1.jpg');
     });
 
+    await t.test('.jpg URLs return JPEG; .png URLs keep returning PNG; the two are cached separately', async () => {
+        const jq = '?type=movie&tag=now_streaming&rank=5&lang=en&logos=0';
+        const jpg = await app.request(`/poster/1.jpg${jq}`);
+        assert.equal(jpg.status, 200);
+        assert.equal(jpg.headers['content-type'], 'image/jpeg');
+        assert.equal(jpg.headers['cache-control'], 'public, max-age=86400');
+        assert.ok(isJpeg(jpg.body));
+        const pngRes = await app.request(`/poster/1.png${jq}`);
+        assert.equal(pngRes.headers['content-type'], 'image/png');
+        assert.ok(isPng(pngRes.body));
+        fake.reset();
+        assert.ok((await app.request(`/poster/1.jpg${jq}`)).body.equals(jpg.body)); // repeat: from cache
+        assert.ok((await app.request(`/poster/1.png${jq}`)).body.equals(pngRes.body));
+        assert.equal(fake.calls.length, 0);
+        const bd = await app.request('/backdrop/1.jpg?type=movie&tag=coming_soon&rank=2&lang=en&logos=0');
+        assert.ok(isJpeg(bd.body));
+    });
+
+    await t.test('.jpg passthrough redirect and placeholder', async () => {
+        const red = await app.request('/poster/1.jpg?tag=none&rank=none');
+        assert.equal(red.status, 302);
+        assert.equal(red.headers.location, 'https://image.tmdb.org/t/p/w500/poster_en_1.jpg');
+        const ph = await app.request('/poster/3.jpg?tag=coming_soon');
+        assert.equal(ph.headers['content-type'], 'image/jpeg');
+        assert.ok(isJpeg(ph.body));
+        assert.equal(ph.headers['cache-control'], 'public, max-age=3600');
+    });
+
     await t.test('nothing to draw -> 302 to TMDB (not a permanent redirect)', async () => {
         const res = await app.request('/poster/1.png?type=movie&tag=none&rank=none&lang=en&logos=0');
         assert.equal(res.status, 302);
         assert.equal(res.headers.location, 'https://image.tmdb.org/t/p/w500/poster_en_1.jpg');
         assert.match(res.headers['cache-control'], /max-age=86400/);
+    });
+
+    await t.test('textless image option reaches renderer and has a distinct cached variant', async () => {
+        const res = await app.request('/poster/1.png?type=movie&tag=none&rank=none&lang=en&logos=0&textless=1');
+        assert.equal(res.status, 200);
+        assert.ok(isPng(res.body));
+        assert.equal(fake.count('/t/p/w500/poster_null_1.jpg'), 1);
+        fake.reset();
+        const repeated = await app.request('/poster/1.png?type=movie&tag=none&rank=none&lang=en&logos=0&textless=1');
+        assert.ok(repeated.body.equals(res.body));
+        assert.equal(fake.calls.length, 0);
+        const standard = await app.request('/poster/1.png?type=movie&tag=none&rank=none&lang=en&logos=0');
+        assert.equal(standard.status, 302);
+        assert.equal(standard.headers.location, 'https://image.tmdb.org/t/p/w500/poster_en_1.jpg');
     });
 
     await t.test('title without artwork -> local placeholder with a short cache', async () => {
@@ -312,9 +493,23 @@ test('HTTP: AIOMetadata pattern routes compute tag and rank, then redirect', asy
         assert.equal(res.headers.location, '/poster/50.png?type=series&tag=season_finale&rank=1&lang=ja&logos=1');
     });
 
+    await t.test('the pattern URL keeps its extension: .jpg -> /poster/*.jpg, .png -> /poster/*.png', async () => {
+        const jpg = await app.request('/image/movie/3.jpg?ranked=1&listLang=en');
+        assert.equal(jpg.headers.location, '/poster/3.jpg?type=movie&tag=just_added&rank=3&lang=en&logos=0');
+        const land = await app.request('/landscape/series/50.jpg?tag=none');
+        assert.equal(land.headers.location, '/backdrop/50.jpg?type=series&tag=none&rank=none&lang=en&logos=0&titleStyle=gradient-v9');
+        const old = await app.request('/image/movie/3.png?ranked=1&listLang=en');
+        assert.equal(old.headers.location, '/poster/3.png?type=movie&tag=just_added&rank=3&lang=en&logos=0');
+    });
+
     await t.test('explicit tag=none, no ranking, and landscape target', async () => {
         const res = await app.request('/landscape/movie/3.png?tag=none');
-        assert.equal(res.headers.location, '/backdrop/3.png?type=movie&tag=none&rank=none&lang=en&logos=0');
+        assert.equal(res.headers.location, '/backdrop/3.png?type=movie&tag=none&rank=none&lang=en&logos=0&titleStyle=gradient-v9');
+    });
+
+    await t.test('textless query passes through to the generated artwork URL', async () => {
+        const res = await app.request('/landscape/movie/3.png?tag=none&textless=1');
+        assert.equal(res.headers.location, '/backdrop/3.png?type=movie&tag=none&rank=none&lang=en&logos=0&textless=1&titleStyle=gradient-v9');
     });
 
     await t.test('hostile / unknown values are normalised', async () => {

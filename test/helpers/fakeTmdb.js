@@ -77,7 +77,7 @@ function makeShow(id, o = {}) {
  * A fetch() stand-in that behaves like api.themoviedb.org + image.tmdb.org for the given fixtures.
  * `fail` maps a substring of "host+path" to a status code (or a function returning a Response) to simulate outages.
  */
-function createFakeTmdb({ movies = [], shows = [], fail = {} } = {}) {
+function createFakeTmdb({ movies = [], shows = [], fail = {}, cdnImages = {} } = {}) {
     const calls = [];
     const byId = (list, id) => list.find((x) => String(x.id) === String(id));
     const genres = {
@@ -126,6 +126,7 @@ function createFakeTmdb({ movies = [], shows = [], fail = {} } = {}) {
 
     async function cdn(url) {
         const size = url.pathname.split('/')[3];
+        if (cdnImages[url.pathname]) return new Response(cdnImages[url.pathname], { status: 200 });
         if (size === 'w500') return new Response(await jpegImage(500, 750), { status: 200 });
         if (size === 'w1280') return new Response(await jpegImage(1280, 720), { status: 200 });
         if (size === 'w154') return new Response(await pngLogo(154, 154), { status: 200 });

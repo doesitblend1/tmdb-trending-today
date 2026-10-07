@@ -68,7 +68,7 @@ const FAVICON_URL = `${ADDON_URL}/favicon.svg`;
 
 const manifest = {
     id: "com.trending.custom",
-    version: "2.0.0",
+    version: "2.5.0",
     name: "TMDB Top Today",
     description: "Customizable Stremio catalogs for top trending TMDB content with optional graphic tags and ranked posters.",
     logo: FAVICON_URL,
@@ -1311,7 +1311,7 @@ app.get('/poster/:id.png', async (req, res) => {
 const configUI = `<!DOCTYPE html>
 <html>
 <head>
-    <title>TMDB Top Today</title>
+    <title>Top Today</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <link rel="icon" href="${FAVICON_URL}" type="image/svg+xml">
     <style>
@@ -1407,7 +1407,7 @@ const configUI = `<!DOCTYPE html>
                 <div style="display: flex; justify-content: space-between; margin-bottom: 10px; color: #b3b3b3; font-weight: 600; font-size: 14px; padding: 0 10px;">
                     <span style="flex: 1.5;">Config</span>
                     <span style="flex: 1; text-align: center;">Poster</span>
-                    <span style="flex: 1; text-align: center;">Backdrop</span>
+                    <span style="flex: 1; text-align: center;">Background</span>
                 </div>
                 <div style="display: flex; justify-content: space-between; align-items: center; background: #2a2a2a; padding: 12px; border-radius: 6px; border: 1px solid #333; margin-bottom: 10px;">
                     <span style="flex: 1.5; color: #fff; font-size: 15px;">Tags</span>
@@ -1462,7 +1462,7 @@ const configUI = `<!DOCTYPE html>
                 <h2 style="margin: 0;">Catalog Preview</h2>
                 <select id="previewMode" onchange="renderCurrentData()" style="width: auto; padding: 8px; margin-bottom: 0;">
                     <option value="poster" selected>Poster</option>
-                    <option value="backdrop">Backdrop</option>
+                    <option value="backdrop">Background</option>
                 </select>
             </div>
             <div class="preview-section">

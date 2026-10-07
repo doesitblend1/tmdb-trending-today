@@ -8,13 +8,13 @@ const { NOW, iso, makeMovie, makeShow, createFakeTmdb } = require('./helpers/fak
 
 const silent = { warn() {}, error() {}, log() {} };
 const now = () => NOW;
-const setup = (fixtures) => {
+const setup = (fixtures, { imageExt } = {}) => {
     const fake = createFakeTmdb(fixtures);
     const tmdb = createTmdbClient({ apiKey: 'k', fetchImpl: fake.fetch, sleep: async () => {}, logger: silent });
     const trending = createTrending({ tmdb, now });
     const tags = createTagResolver({ tmdb, now, logger: silent });
     const genres = createGenres(tmdb, { logger: silent });
-    const catalog = createCatalog({ tmdb, trending, tags, genres, addonUrl: 'https://addon.test' });
+    const catalog = createCatalog({ tmdb, trending, tags, genres, addonUrl: 'https://addon.test', imageExt });
     return { fake, tmdb, trending, tags, genres, catalog };
 };
 
@@ -135,9 +135,9 @@ test('catalog: movies', async () => {
     assert.equal(metas[0].logo, 'https://image.tmdb.org/t/p/original/logo_en_1.png');
     assert.equal(metas[1].id, 'tmdb:2'); // no IMDb id: falls back to the TMDB id
 
-    // URL format is a public contract (existing installs and caches depend on it)
-    assert.equal(metas[1].poster, 'https://addon.test/poster/2.png?type=movie&tag=just_added&rank=2&lang=en&logos=0');
-    assert.equal(metas[1].background, 'https://addon.test/backdrop/2.png?type=movie&tag=just_added&rank=none&lang=en&logos=0');
+    // Parameter order is a public contract; the extension is .jpg by default (see the PNG test below)
+    assert.equal(metas[1].poster, 'https://addon.test/poster/2.jpg?type=movie&tag=just_added&rank=2&lang=en&logos=0');
+    assert.equal(metas[1].background, 'https://addon.test/backdrop/2.jpg?type=movie&tag=just_added&rank=none&lang=en&logos=0&titleStyle=gradient-v9');
 
     // Details / tags are only fetched for the titles that are shown
     assert.equal(fake.calls.filter((c) => /\/3\/movie\/\d+\?/.test(c) && c.includes('append_to_response')).length, 10);
@@ -148,16 +148,37 @@ test('catalog: settings change the URLs', async () => {
 
     const off = (await catalog.getCatalog('movie', { posterTags: 'false', posterRanked: 'false', backdropTags: 'false' })).metas[0];
     assert.equal(off.poster, 'https://image.tmdb.org/t/p/w500/p1.jpg'); // nothing to draw: straight to TMDB
-    assert.equal(off.background, 'https://addon.test/backdrop/1.png?type=movie&tag=none&rank=none&lang=en&logos=0');
+    assert.equal(off.background, 'https://addon.test/backdrop/1.jpg?type=movie&tag=none&rank=none&lang=en&logos=0&titleStyle=gradient-v9');
 
     const custom = (await catalog.getCatalog('movie', { posterLanguage: 'ja', posterLogos: 'true', backdropRanked: 'true', backdropLanguage: 'null' })).metas[0];
     assert.match(custom.poster, /lang=ja&logos=1$/);
-    assert.match(custom.background, /rank=1&lang=null&logos=0$/);
+    assert.match(custom.background, /rank=1&lang=null&logos=0&titleStyle=gradient-v9$/);
 
-    const landscape = (await catalog.getCatalog('series', { posterShape: 'landscape' })).metas[0];
+    // Landscape: the tile follows the poster settings and the background follows the backdrop settings, exactly like portrait
+    const landscape = (await catalog.getCatalog('series', { posterShape: 'landscape', posterRanked: 'false', backdropRanked: 'true', backdropLanguage: 'null' })).metas[0];
     assert.equal(landscape.posterShape, 'landscape');
-    assert.match(landscape.poster, /^https:\/\/addon\.test\/backdrop\/9\.png\?type=series/);
-    assert.equal(landscape.background, 'https://addon.test/backdrop/9.png?type=series&tag=none&rank=none&lang=en&logos=0');
+    assert.equal(landscape.poster, 'https://addon.test/backdrop/9.jpg?type=series&tag=none&rank=none&lang=en&logos=0&titleStyle=gradient-v9');
+    assert.equal(landscape.background, 'https://addon.test/backdrop/9.jpg?type=series&tag=none&rank=1&lang=null&logos=0&titleStyle=gradient-v9');
+
+    const textless = (await catalog.getCatalog('movie', {
+        textlessArtwork: 'true', posterTags: 'false', posterRanked: 'false',
+    })).metas[0];
+    assert.equal(textless.poster, 'https://addon.test/poster/1.jpg?type=movie&tag=none&rank=none&lang=en&logos=0&textless=1&titleStyle=gradient-v9');
+    assert.equal(textless.background, 'https://addon.test/backdrop/1.jpg?type=movie&tag=none&rank=none&lang=en&logos=0&titleStyle=gradient-v9');
+
+    const curatedBackground = (await catalog.getCatalog('movie', {
+        backdropTextlessArtwork: 'true', backdropTags: 'false', backdropRanked: 'false',
+        posterTags: 'false', posterRanked: 'false',
+    })).metas[0];
+    assert.equal(curatedBackground.background, 'https://addon.test/backdrop/1.jpg?type=movie&tag=none&rank=none&lang=en&logos=0&textless=1&titleStyle=gradient-v9');
+    assert.equal(curatedBackground.poster, 'https://image.tmdb.org/t/p/w500/p1.jpg');
+});
+
+test('catalog: IMAGE_FORMAT=png keeps handing out .png URLs', async () => {
+    const { catalog } = setup({ movies: [makeMovie(1)] }, { imageExt: 'png' });
+    const meta = (await catalog.getCatalog('movie', {})).metas[0];
+    assert.equal(meta.poster, 'https://addon.test/poster/1.png?type=movie&tag=none&rank=1&lang=en&logos=0');
+    assert.match(meta.background, /^https:\/\/addon\.test\/backdrop\/1\.png\?/);
 });
 
 test('catalog: series tags, and the non-English language chip', async () => {

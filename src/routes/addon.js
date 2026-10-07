@@ -3,7 +3,7 @@ const { parseConfigSegment } = require('../userConfig');
 const { wrap } = require('../http');
 const { CATALOG_CACHE_SECONDS } = require('../catalog');
 
-const FAVICON_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><circle cx="50" cy="50" r="50" fill="#8b0000"/><path d="M25 70l15-25 15 15 20-30" fill="none" stroke="white" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/><path d="M55 30h20v20" fill="none" stroke="white" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const FAVICON_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><circle cx="50" cy="50" r="50" fill="#b91d23"/><path d="M25 70l15-25 15 15 20-30" fill="none" stroke="white" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/><path d="M55 30h20v20" fill="none" stroke="white" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 
 /**
  * @param app       Express app (only `.get` is used)

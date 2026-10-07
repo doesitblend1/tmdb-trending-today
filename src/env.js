@@ -16,6 +16,9 @@ function loadEnv(env = process.env) {
         problems.push('ADDON_URL must be an absolute http(s) URL, e.g. https://addon.example.com');
     }
 
+    const imageFormat = (env.IMAGE_FORMAT || 'jpg').trim().toLowerCase();
+    if (imageFormat !== 'jpg' && imageFormat !== 'png') problems.push('IMAGE_FORMAT must be "jpg" or "png"');
+
     if (problems.length) throw new Error(`Invalid environment:\n - ${problems.join('\n - ')}`);
 
     return {
@@ -25,6 +28,8 @@ function loadEnv(env = process.env) {
         // Same folder as before (next to server.js) unless CACHE_DIR points elsewhere, e.g. a Docker volume
         cacheDir: env.CACHE_DIR ? path.resolve(env.CACHE_DIR) : path.resolve(__dirname, '..', 'image-cache'),
         renderConcurrency: Number(env.RENDER_CONCURRENCY) || 4,
+        // Format of the artwork URLs the catalog and configure page hand out. Both extensions are always served.
+        imageFormat,
     };
 }
 
